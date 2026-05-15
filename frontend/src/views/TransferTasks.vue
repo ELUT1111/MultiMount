@@ -1,0 +1,188 @@
+<!--
+  传输任务页面 — 显示所有上传/下载任务, 支持暂停/恢复/取消/重试。
+  通过 WebSocket 实时接收进度更新, 无需手动刷新。
+-->
+<template>
+  <div class="transfer-tasks">
+    <div class="page-header">
+      <h2>传输任务</h2>
+      <div class="header-actions">
+        <el-button @click="transfers.fetchTasks()" :icon="Refresh">刷新</el-button>
+        <el-button @click="handleBatchPause" :disabled="!transfers.activeCount">全部暂停</el-button>
+        <el-button type="primary" @click="handleBatchResume">全部继续</el-button>
+        <el-button type="danger" plain @click="handleBatchCancel" :disabled="!runningCount">全部取消</el-button>
+        <el-button @click="handleClearCompleted" :disabled="!completedCount">清除已完成</el-button>
+      </div>
+    </div>
+
+    <!-- 全局速率限制 -->
+    <div class="rate-limit-bar">
+      <span class="rate-label">全局速率限制:</span>
+      <span class="rate-label">下载</span>
+      <el-slider v-model="rateLimitDownload" :min="0" :max="10240" :step="64" :format-tooltip="(v) => v ? v + ' KB/s' : '不限'" style="width: 180px" />
+      <span class="rate-label">上传</span>
+      <el-slider v-model="rateLimitUpload" :min="0" :max="10240" :step="64" :format-tooltip="(v) => v ? v + ' KB/s' : '不限'" style="width: 180px" />
+    </div>
+
+    <!-- 状态标签页 -->
+    <el-tabs v-model="transfers.activeTab">
+      <el-tab-pane name="running">
+        <template #label>
+          进行中 <el-badge :value="runningCount" v-if="runningCount" :max="99" />
+        </template>
+      </el-tab-pane>
+      <el-tab-pane name="completed">
+        <template #label>
+          已完成 <el-badge :value="completedCount" v-if="completedCount" :max="99" type="success" />
+        </template>
+      </el-tab-pane>
+      <el-tab-pane name="failed">
+        <template #label>
+          已失败 <el-badge :value="failedCount" v-if="failedCount" :max="99" type="danger" />
+        </template>
+      </el-tab-pane>
+    </el-tabs>
+
+    <!-- 任务列表 -->
+    <div v-loading="transfers.loading" class="task-list">
+      <el-empty v-if="!transfers.loading && transfers.filteredTasks.length === 0" description="暂无传输任务" />
+
+      <TransferCard
+        v-for="task in transfers.filteredTasks"
+        :key="task.id"
+        :task="task"
+        @pause="transfers.pauseTask"
+        @resume="transfers.resumeTask"
+        @cancel="handleCancel"
+        @retry="transfers.retryTask"
+      />
+    </div>
+
+    <!-- 底部状态栏 -->
+    <div class="transfer-footer">
+      <div class="stat">
+        <el-icon><Upload /></el-icon>
+        <span>上传: {{ formatSpeed(transfers.totalUploadSpeed) }}</span>
+      </div>
+      <div class="stat">
+        <el-icon><Download /></el-icon>
+        <span>下载: {{ formatSpeed(transfers.totalDownloadSpeed) }}</span>
+      </div>
+      <div class="stat">
+        <el-icon><Connection /></el-icon>
+        <span>并发任务: {{ transfers.activeCount }}</span>
+      </div>
+      <div class="stat ws-status">
+        <span class="ws-dot" :class="wsConnected ? 'connected' : 'disconnected'" />
+        <span>{{ wsConnected ? '实时同步' : '未连接' }}</span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, watch } from 'vue'
+import { Refresh, Upload, Download, Connection } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useTransfersStore } from '@/stores/transfers'
+import { useWebSocket } from '@/composables/useWebSocket'
+import { formatSpeed } from '@/utils/format'
+import TransferCard from '@/components/transfer/TransferCard.vue'
+
+const transfers = useTransfersStore()
+
+// 全局速率限制 (KB/s, 0=不限)
+const rateLimitDownload = ref(0)
+const rateLimitUpload = ref(0)
+
+// WebSocket 实时进度
+const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+const { data: wsData, connected: wsConnected, connect: wsConnect } = useWebSocket(
+  `${wsProtocol}//${location.host}/api/v1/transfers/ws`
+)
+
+// 计数
+const runningCount = computed(() => transfers.tasks.filter((t) => ['pending', 'running', 'paused'].includes(t.status)).length)
+const completedCount = computed(() => transfers.tasks.filter((t) => t.status === 'completed').length)
+const failedCount = computed(() => transfers.tasks.filter((t) => t.status === 'failed').length)
+
+// WebSocket 收到进度更新 → 更新 store
+watch(wsData, (val) => {
+  if (val?.type === 'transfer_progress') {
+    transfers.updateTaskProgress(val)
+  }
+})
+
+// 取消任务
+async function handleCancel(id) {
+  await ElMessageBox.confirm('确定取消此任务?', '确认', { type: 'warning' })
+  await transfers.cancelTask(id)
+  ElMessage.success('已取消')
+}
+
+// 批量暂停
+async function handleBatchPause() {
+  const running = transfers.tasks.filter((t) => t.status === 'running')
+  for (const t of running) {
+    await transfers.pauseTask(t.id)
+  }
+  ElMessage.success('已全部暂停')
+}
+
+// 批量恢复
+async function handleBatchResume() {
+  const paused = transfers.tasks.filter((t) => t.status === 'paused')
+  for (const t of paused) {
+    await transfers.resumeTask(t.id)
+  }
+  ElMessage.success('已全部恢复')
+}
+
+// 批量取消
+async function handleBatchCancel() {
+  await ElMessageBox.confirm('确定取消所有进行中的任务?', '确认', { type: 'warning' })
+  const active = transfers.tasks.filter((t) => ['pending', 'running', 'paused'].includes(t.status))
+  for (const t of active) {
+    await transfers.cancelTask(t.id)
+  }
+  ElMessage.success('已全部取消')
+}
+
+// 清除已完成
+async function handleClearCompleted() {
+  const completed = transfers.tasks.filter((t) => t.status === 'completed')
+  for (const t of completed) {
+    await transfers.cancelTask(t.id)
+  }
+  ElMessage.success('已清除')
+}
+
+onMounted(() => {
+  transfers.fetchTasks()
+  wsConnect()
+})
+</script>
+
+<style scoped>
+.transfer-tasks { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+.page-header { display: flex; justify-content: space-between; align-items: center; }
+.page-header h2 { font-size: 20px; }
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.rate-limit-bar {
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+  background: var(--card-bg); border-radius: 8px; font-size: 13px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.rate-label { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
+.task-list { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.transfer-footer {
+  display: flex; gap: 24px; align-items: center; padding: 12px 16px;
+  background: var(--card-bg); border-radius: 8px; font-size: 13px; color: var(--text-regular);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.stat { display: flex; align-items: center; gap: 6px; }
+.ws-status { margin-left: auto; }
+.ws-dot { width: 8px; height: 8px; border-radius: 50%; }
+.ws-dot.connected { background: var(--success-color); }
+.ws-dot.disconnected { background: var(--danger-color); }
+</style>
