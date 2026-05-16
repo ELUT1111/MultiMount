@@ -35,6 +35,7 @@
         <div class="card-body">
           <div class="info-row"><span>地址:</span> <span>{{ mount.config.host || mount.config.url || mount.config.path || '-' }}{{ mount.config.port ? ':' + mount.config.port : '' }}</span></div>
           <div class="info-row"><span>路径:</span> <span>{{ mount.config.path || mount.config.prefix || '/' }}</span></div>
+          <div class="info-row" v-if="mount.owner_name"><span>创建者:</span> <span>{{ mount.owner_name }}</span></div>
           <div class="info-row" v-if="mount.capacity_total"><span>容量:</span> <span>{{ formatSize(mount.capacity_used) }} / {{ formatSize(mount.capacity_total) }}</span></div>
           <div class="info-row" v-if="mount.last_connected_at"><span>最后连接:</span> <span>{{ formatTime(mount.last_connected_at) }}</span></div>
         </div>

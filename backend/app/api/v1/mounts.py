@@ -1,18 +1,21 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.user import User
 from app.schemas.mount import MountCreate, MountOut, MountUpdate
 from app.services import mount_service
+from app.core.mount_permissions import check_basic_permission
 
 router = APIRouter()
 
 
 def _mount_to_out(mount) -> MountOut:
-    """将 ORM 对象转为响应模型, 脱敏配置"""
+    """将 ORM 对象转为响应模型, 脱敏配置, 附加创建者信息"""
     data = {
         "id": mount.id,
         "name": mount.name,
@@ -23,10 +26,23 @@ def _mount_to_out(mount) -> MountOut:
         "capacity_used": mount.capacity_used,
         "capacity_total": mount.capacity_total,
         "last_connected_at": mount.last_connected_at,
+        "user_id": mount.user_id,
         "created_at": mount.created_at,
         "updated_at": mount.updated_at,
     }
     return MountOut(**data)
+
+
+async def _enrich_owner_names(mounts: list[MountOut], db: AsyncSession) -> list[MountOut]:
+    """批量填充创建者用户名"""
+    user_ids = {m.user_id for m in mounts if m.user_id}
+    if not user_ids:
+        return mounts
+    result = await db.execute(select(User.id, User.username).where(User.id.in_(user_ids)))
+    name_map = {uid: uname for uid, uname in result.all()}
+    for m in mounts:
+        m.owner_name = name_map.get(m.user_id)
+    return mounts
 
 
 @router.get("", response_model=list[MountOut])
@@ -35,17 +51,19 @@ async def list_mounts(
     db: AsyncSession = Depends(get_db),
 ):
     mounts = await mount_service.list_mounts(db)
-    return [_mount_to_out(m) for m in mounts]
+    out = [_mount_to_out(m) for m in mounts]
+    return await _enrich_owner_names(out, db)
 
 
 @router.post("", response_model=MountOut, status_code=201)
 async def create_mount(
     body: MountCreate,
-    _user=Depends(get_current_user),
+    user=Depends(check_basic_permission("can_manage_mounts")),
     db: AsyncSession = Depends(get_db),
 ):
     mount = await mount_service.create_mount(
-        db, body.name, body.type, body.config, body.advanced_config
+        db, body.name, body.type, body.config, body.advanced_config,
+        user_id=user.id,
     )
     return _mount_to_out(mount)
 
@@ -64,9 +82,14 @@ async def get_mount(
 async def update_mount(
     mount_id: int,
     body: MountUpdate,
-    _user=Depends(get_current_user),
+    user=Depends(check_basic_permission("can_manage_mounts")),
     db: AsyncSession = Depends(get_db),
 ):
+    # 管理员可编辑任意挂载, 普通用户仅可编辑自己的
+    is_admin = user.role and user.role.name == "admin"
+    existing = await mount_service.get_mount(db, mount_id)
+    if not is_admin and existing.user_id and existing.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能编辑自己创建的挂载")
     mount = await mount_service.update_mount(
         db, mount_id,
         name=body.name,
@@ -79,10 +102,11 @@ async def update_mount(
 @router.delete("/{mount_id}", status_code=204)
 async def delete_mount(
     mount_id: int,
-    _user=Depends(get_current_user),
+    user=Depends(check_basic_permission("can_manage_mounts")),
     db: AsyncSession = Depends(get_db),
 ):
-    await mount_service.delete_mount(db, mount_id)
+    is_admin = user.role and user.role.name == "admin"
+    await mount_service.delete_mount(db, mount_id, user_id=user.id, is_admin=is_admin)
 
 
 @router.post("/{mount_id}/test")

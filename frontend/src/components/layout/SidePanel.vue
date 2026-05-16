@@ -42,23 +42,32 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { FolderOpened, Connection, User, Upload, Setting, Plus, Monitor, Cloudy } from '@element-plus/icons-vue'
+import { FolderOpened, Connection, User, Upload, Setting, Plus, Monitor, Cloudy, DataLine } from '@element-plus/icons-vue'
 import { useMountsStore } from '@/stores/mounts'
 import { useFilesStore } from '@/stores/files'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const mounts = useMountsStore()
 const files = useFilesStore()
+const auth = useAuthStore()
 const webdavRunning = ref(false)
 const currentPath = computed(() => route.path)
 
-const menuItems = [
+// 所有菜单项 (adminOnly 标记的仅管理员可见)
+const allMenuItems = [
   { path: '/files', label: '文件浏览器', icon: FolderOpened },
   { path: '/mounts', label: '挂载管理', icon: Connection },
-  { path: '/users', label: '用户与权限', icon: User },
   { path: '/transfers', label: '传输任务', icon: Upload },
-  { path: '/settings', label: '系统设置', icon: Setting },
+  { path: '/users', label: '用户与权限', icon: User, adminOnly: true },
+  { path: '/settings', label: '系统设置', icon: Setting, adminOnly: true },
+  { path: '/monitor', label: '请求监控', icon: DataLine, adminOnly: true },
 ]
+
+// 根据管理员身份过滤菜单
+const menuItems = computed(() =>
+  auth.isAdmin ? allMenuItems : allMenuItems.filter((i) => !i.adminOnly)
+)
 
 const iconMap = { local: FolderOpened, ftp: Connection, sftp: Connection, webdav: Monitor, oss: Cloudy, s3: Cloudy }
 function mountTypeIcon(type) { return iconMap[type] || Connection }

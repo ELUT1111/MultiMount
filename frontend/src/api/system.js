@@ -1,5 +1,5 @@
 /**
- * 系统设置 API — HTTPS 配置、日志管理、系统信息。
+ * 系统设置 API — HTTPS 配置、日志管理、系统信息、访问监控、IP 黑名单。
  */
 import request from '@/utils/request'
 
@@ -37,3 +37,20 @@ export const clearLogs = (logType) => request.post('/system/logs/clear', null, {
 
 /** 浏览服务器本地目录 (仅返回文件夹) */
 export const browseFolders = (path = '') => request.get('/system/browse', { params: { path } })
+
+// ── 访问监控 & IP 黑名单 ──────────────────────────────────
+
+/** 分页获取访问日志 */
+export const getAccessLogs = (params) => request.get('/system/access-logs', { params })
+
+/** 获取访问统计摘要 */
+export const getAccessStats = () => request.get('/system/access-stats')
+
+/** 获取 IP 黑名单列表 */
+export const getIPBlacklist = () => request.get('/system/ip-blacklist')
+
+/** 添加 IP 到黑名单 */
+export const addIPBlacklist = (data) => request.post('/system/ip-blacklist', data)
+
+/** 从黑名单移除 IP */
+export const removeIPBlacklist = (ip) => request.delete(`/system/ip-blacklist/${encodeURIComponent(ip)}`)

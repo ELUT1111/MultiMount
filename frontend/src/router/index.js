@@ -28,6 +28,7 @@ const routes = [
         path: 'users',
         name: 'UserManager',
         component: () => import('@/views/UserManager.vue'),
+        meta: { requiresAdmin: true },
       },
       {
         path: 'transfers',
@@ -38,6 +39,13 @@ const routes = [
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('@/views/SystemSettings.vue'),
+        meta: { requiresAdmin: true },
+      },
+      {
+        path: 'monitor',
+        name: 'RequestMonitor',
+        component: () => import('@/views/RequestMonitor.vue'),
+        meta: { requiresAdmin: true },
       },
     ],
   },
@@ -48,13 +56,15 @@ const router = createRouter({
   routes,
 })
 
-// 导航守卫: 校验 JWT
+// 导航守卫: 校验 JWT + 管理员权限
 router.beforeEach((to, _from, next) => {
   const auth = useAuthStore()
   if (to.meta.requiresAuth !== false && !auth.isAuthenticated) {
     next('/login')
   } else if (to.path === '/login' && auth.isAuthenticated) {
     next('/')
+  } else if (to.meta.requiresAdmin && !auth.isAdmin) {
+    next('/files')
   } else {
     next()
   }

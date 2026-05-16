@@ -14,6 +14,7 @@
       <el-checkbox v-model="localRole.permissions.can_download" label="允许下载" />
       <el-checkbox v-model="localRole.permissions.can_modify" label="允许修改" />
       <el-checkbox v-model="localRole.permissions.can_delete" label="允许删除" />
+      <el-checkbox v-model="localRole.permissions.can_manage_mounts" label="允许挂载管理" />
     </div>
 
     <el-divider />
@@ -72,7 +73,7 @@ defineEmits(['save', 'reset'])
 const localRole = reactive({
   id: null,
   name: '',
-  permissions: { can_login: true, can_upload: true, can_download: true, can_modify: false, can_delete: false },
+  permissions: { can_login: true, can_upload: true, can_download: true, can_modify: false, can_delete: false, can_manage_mounts: false },
   mount_permissions: {},
   qos_limits: { max_download_kbps: 0, max_upload_kbps: 0, max_concurrent: 5 },
 })

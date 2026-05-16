@@ -30,12 +30,14 @@ async def lifespan(_app: FastAPI):
 
     # 初始化默认角色和管理员用户
     from app.services.auth_service import seed_default_roles, seed_admin_user
+    from app.services.ip_blacklist_service import init_cache
     from app.database import async_session_factory
 
     async with async_session_factory() as db:
         await seed_default_roles(db)
         await seed_admin_user(db)
         await db.commit()
+        await init_cache(db)
     logger.info("默认角色和管理员用户初始化完成")
 
     yield

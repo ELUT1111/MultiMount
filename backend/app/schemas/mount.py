@@ -76,6 +76,8 @@ class MountOut(BaseModel):
     capacity_used: int | None
     capacity_total: int | None
     last_connected_at: datetime | None
+    user_id: int | None = None  # 创建者 ID (None = 系统预置)
+    owner_name: str | None = None  # 创建者用户名 (仅用于展示)
     created_at: datetime
     updated_at: datetime
 

@@ -70,8 +70,9 @@ async def get_mount(db: AsyncSession, mount_id: int) -> Mount:
 
 
 async def create_mount(db: AsyncSession, name: str, mount_type: str,
-                       config: dict, advanced_config: dict | None = None) -> Mount:
-    # 验证配置
+                       config: dict, advanced_config: dict | None = None,
+                       user_id: int | None = None) -> Mount:
+    """创建挂载点, user_id 记录创建者"""
     if mount_type not in AdapterRegistry.supported_types():
         raise BadRequestException(f"不支持的挂载类型: {mount_type}")
 
@@ -80,6 +81,7 @@ async def create_mount(db: AsyncSession, name: str, mount_type: str,
         type=mount_type,
         config=_encrypt_config(config),
         advanced_config=advanced_config,
+        user_id=user_id,
     )
     db.add(mount)
     await db.flush()
@@ -100,8 +102,18 @@ async def update_mount(db: AsyncSession, mount_id: int, **kwargs) -> Mount:
     return mount
 
 
-async def delete_mount(db: AsyncSession, mount_id: int) -> None:
+async def delete_mount(db: AsyncSession, mount_id: int, user_id: int | None = None,
+                      is_admin: bool = False) -> None:
+    """
+    删除挂载点。权限规则:
+    - 管理员可删除任意挂载
+    - 普通用户仅可删除自己创建的挂载 (user_id 匹配)
+    - 系统预置挂载 (user_id=None) 仅管理员可删
+    """
     mount = await get_mount(db, mount_id)
+    if not is_admin:
+        if mount.user_id is None or mount.user_id != user_id:
+            raise BadRequestException("只能删除自己创建的挂载")
     await db.delete(mount)
     await db.flush()
 
