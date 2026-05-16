@@ -2,6 +2,8 @@
   --sidebar-width: 240px;
   --topbar-height: 56px;
   --detail-width: 300px;
+  --bp-sm: 768px;
+  --bp-md: 1024px;
   --primary-color: #409eff;
   --success-color: #67c23a;
   --warning-color: #e6a23c;
@@ -94,7 +96,18 @@ html, body, #app {
 .dark ::-webkit-scrollbar-thumb { background: #555; }
 .dark ::-webkit-scrollbar-thumb:hover { background: #777; }
 
-/* 滚动条样式 */
+/* 响应式工具类 */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: 64px;
+  }
+}
+
+/* 滚动条样式 (WebKit + Firefox) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c0c4cc transparent;
+}
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -105,4 +118,7 @@ html, body, #app {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+.dark * {
+  scrollbar-color: #555 transparent;
 }

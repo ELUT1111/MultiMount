@@ -1,13 +1,14 @@
 """
 文件操作路由 — 提供跨挂载点的统一文件 CRUD + 流式上传/下载接口。
 所有路由通过 mount_id 定位挂载点, path 参数指定虚拟路径。
+权限校验: 读操作需 read 权限, 写操作需 readwrite 权限。
 """
 from fastapi import APIRouter, Depends, Query, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.core.mount_permissions import require_mount_access
 from app.schemas.file import FileInfoOut, MoveCopyRequest
 from app.services import file_service
 from app.utils.file_utils import guess_mime
@@ -19,7 +20,7 @@ router = APIRouter()
 async def list_files(
     mount_id: int,
     path: str = Query("/", description="目录路径"),
-    _user=Depends(get_current_user),
+    _user=Depends(require_mount_access("read")),
     db: AsyncSession = Depends(get_db),
 ):
     """列出指定目录下的文件和子目录"""
@@ -43,7 +44,7 @@ async def list_files(
 async def get_file_info(
     mount_id: int,
     path: str = Query(..., description="文件路径"),
-    _user=Depends(get_current_user),
+    _user=Depends(require_mount_access("read")),
     db: AsyncSession = Depends(get_db),
 ):
     """获取单个文件/目录的元数据"""
@@ -59,18 +60,15 @@ async def get_file_info(
 async def download_file(
     mount_id: int,
     path: str = Query(..., description="文件路径"),
-    _user=Depends(get_current_user),
+    _user=Depends(require_mount_access("read")),
     db: AsyncSession = Depends(get_db),
 ):
     """流式下载文件 — 使用 StreamingResponse 逐块返回, 支持大文件"""
-    # 获取文件信息以确定 MIME 类型和文件名
     info = await file_service.get_info(db, mount_id, path)
     mime = info.mime_type or "application/octet-stream"
     filename = info.name
 
-    # 构造异步生成器包装
     async def stream_with_db():
-        """包装下载流: 每次 yield 一个 chunk, 避免数据库会话长时间占用"""
         async for chunk in file_service.download_file(db, mount_id, path):
             yield chunk
 
@@ -89,15 +87,13 @@ async def upload_file(
     mount_id: int,
     path: str = Query("/", description="目标目录路径"),
     file: UploadFile = FastAPIFile(...),
-    _user=Depends(get_current_user),
+    _user=Depends(require_mount_access("readwrite")),
     db: AsyncSession = Depends(get_db),
 ):
     """上传文件 — 接收 multipart/form-data, 流式写入目标挂载点"""
-    # 拼接完整目标路径: 目录 + 文件名
     target_path = path.rstrip("/") + "/" + file.filename
 
     async def file_chunk_iter():
-        """将 UploadFile 转为异步字节迭代器 (64KB 分块)"""
         while chunk := await file.read(64 * 1024):
             yield chunk
 
@@ -115,7 +111,7 @@ async def upload_file(
 async def make_directory(
     mount_id: int,
     path: str = Query(..., description="新目录路径"),
-    _user=Depends(get_current_user),
+    _user=Depends(require_mount_access("readwrite")),
     db: AsyncSession = Depends(get_db),
 ):
     """创建新目录"""
@@ -131,7 +127,7 @@ async def make_directory(
 async def move_file(
     mount_id: int,
     body: MoveCopyRequest,
-    _user=Depends(get_current_user),
+    _user=Depends(require_mount_access("readwrite")),
     db: AsyncSession = Depends(get_db),
 ):
     """移动/重命名文件或目录"""
@@ -147,7 +143,7 @@ async def move_file(
 async def copy_file(
     mount_id: int,
     body: MoveCopyRequest,
-    _user=Depends(get_current_user),
+    _user=Depends(require_mount_access("readwrite")),
     db: AsyncSession = Depends(get_db),
 ):
     """复制文件或目录"""
@@ -163,7 +159,7 @@ async def copy_file(
 async def delete_file(
     mount_id: int,
     path: str = Query(..., description="文件路径"),
-    _user=Depends(get_current_user),
+    _user=Depends(require_mount_access("readwrite")),
     db: AsyncSession = Depends(get_db),
 ):
     """删除文件或目录"""

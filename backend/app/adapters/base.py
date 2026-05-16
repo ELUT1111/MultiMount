@@ -62,16 +62,13 @@ class BaseAdapter(ABC):
         """移动/重命名"""
 
     async def copy(self, src: str, dst: str) -> None:
-        """复制文件 (默认实现: 下载再上传)"""
-        chunks = []
-        async for chunk in self.download(src):
-            chunks.append(chunk)
+        """复制文件 (默认实现: 流式下载再上传, 不缓冲整个文件)"""
 
-        async def _data():
-            for c in chunks:
-                yield c
+        async def _stream():
+            async for chunk in self.download(src):
+                yield chunk
 
-        await self.upload(dst, _data())
+        await self.upload(dst, _stream())
 
     async def get_capacity(self) -> dict | None:
         """获取存储容量信息 {used, total}, 不支持则返回 None"""

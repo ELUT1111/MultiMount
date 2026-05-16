@@ -7,6 +7,19 @@ const service = axios.create({
   timeout: 30000,
 })
 
+// 上传专用实例 (更长超时)
+export const uploadService = axios.create({
+  baseURL: '/api/v1',
+  timeout: 300000,
+})
+
+// 上传实例复用相同的拦截器
+uploadService.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
 // 请求拦截: 注入 JWT
 service.interceptors.request.use((config) => {
   const token = localStorage.getItem('access_token')
@@ -29,7 +42,7 @@ service.interceptors.response.use(
       if (refresh && !error.config._retry) {
         error.config._retry = true
         try {
-          const { data } = await axios.post('/api/v1/auth/refresh', {
+          const { data } = await service.post('/auth/refresh', {
             refresh_token: refresh,
           })
           localStorage.setItem('access_token', data.access_token)

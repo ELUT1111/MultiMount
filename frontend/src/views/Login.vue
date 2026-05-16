@@ -10,44 +10,46 @@
       </div>
 
       <!-- 登录表单 -->
-      <el-form v-if="mode === 'login'" ref="loginFormRef" :model="loginForm" :rules="loginRules" label-width="0" size="large">
-        <el-form-item prop="username">
-          <el-input v-model="loginForm.username" placeholder="用户名" :prefix-icon="User" />
-        </el-form-item>
-        <el-form-item prop="password">
-          <el-input v-model="loginForm.password" type="password" placeholder="密码" :prefix-icon="Lock" show-password @keyup.enter="handleLogin" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="loading" style="width:100%" @click="handleLogin">登 录</el-button>
-        </el-form-item>
-        <div class="form-footer">
-          <span>还没有账号?</span>
-          <el-link type="primary" @click="switchMode('register')">立即注册</el-link>
-        </div>
-      </el-form>
+      <transition name="fade" mode="out-in">
+        <el-form v-if="mode === 'login'" key="login" ref="loginFormRef" :model="loginForm" :rules="loginRules" label-width="0" size="large" aria-label="登录表单">
+          <el-form-item prop="username">
+            <el-input v-model="loginForm.username" placeholder="用户名" :prefix-icon="User" :disabled="loading" />
+          </el-form-item>
+          <el-form-item prop="password">
+            <el-input v-model="loginForm.password" type="password" placeholder="密码" :prefix-icon="Lock" show-password :disabled="loading" @keyup.enter="handleLogin" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="loading" style="width:100%" @click="handleLogin">登 录</el-button>
+          </el-form-item>
+          <div class="form-footer">
+            <span>还没有账号?</span>
+            <el-link type="primary" @click="switchMode('register')">立即注册</el-link>
+          </div>
+        </el-form>
 
-      <!-- 注册表单 -->
-      <el-form v-else ref="registerFormRef" :model="registerForm" :rules="registerRules" label-width="0" size="large">
-        <el-form-item prop="username">
-          <el-input v-model="registerForm.username" placeholder="用户名 (2-64字符)" :prefix-icon="User" />
-        </el-form-item>
-        <el-form-item prop="email">
-          <el-input v-model="registerForm.email" placeholder="邮箱地址" :prefix-icon="Message" />
-        </el-form-item>
-        <el-form-item prop="password">
-          <el-input v-model="registerForm.password" type="password" placeholder="密码 (至少6位)" :prefix-icon="Lock" show-password />
-        </el-form-item>
-        <el-form-item prop="confirmPassword">
-          <el-input v-model="registerForm.confirmPassword" type="password" placeholder="确认密码" :prefix-icon="Lock" show-password @keyup.enter="handleRegister" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="loading" style="width:100%" @click="handleRegister">注 册</el-button>
-        </el-form-item>
-        <div class="form-footer">
-          <span>已有账号?</span>
-          <el-link type="primary" @click="switchMode('login')">返回登录</el-link>
-        </div>
-      </el-form>
+        <!-- 注册表单 -->
+        <el-form v-else key="register" ref="registerFormRef" :model="registerForm" :rules="registerRules" label-width="0" size="large" aria-label="注册表单">
+          <el-form-item prop="username">
+            <el-input v-model="registerForm.username" placeholder="用户名 (2-64字符)" :prefix-icon="User" :disabled="loading" />
+          </el-form-item>
+          <el-form-item prop="email">
+            <el-input v-model="registerForm.email" placeholder="邮箱地址" :prefix-icon="Message" :disabled="loading" />
+          </el-form-item>
+          <el-form-item prop="password">
+            <el-input v-model="registerForm.password" type="password" placeholder="密码 (至少6位)" :prefix-icon="Lock" show-password :disabled="loading" />
+          </el-form-item>
+          <el-form-item prop="confirmPassword">
+            <el-input v-model="registerForm.confirmPassword" type="password" placeholder="确认密码" :prefix-icon="Lock" show-password :disabled="loading" @keyup.enter="handleRegister" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="loading" style="width:100%" @click="handleRegister">注 册</el-button>
+          </el-form-item>
+          <div class="form-footer">
+            <span>已有账号?</span>
+            <el-link type="primary" @click="switchMode('login')">返回登录</el-link>
+          </div>
+        </el-form>
+      </transition>
     </div>
   </div>
 </template>
@@ -186,7 +188,13 @@ function switchMode(m) {
   gap: 4px;
 }
 
+/* 表单切换过渡 */
+.fade-enter-active, .fade-leave-active { transition: opacity 0.25s ease, transform 0.25s ease; }
+.fade-enter-from { opacity: 0; transform: translateX(20px); }
+.fade-leave-to { opacity: 0; transform: translateX(-20px); }
+
 /* 深色主题 */
+.dark .login-page { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }
 .dark .login-card { background: #1e1e1e; }
 .dark .login-header h1 { color: #f0f0f0; }
 </style>

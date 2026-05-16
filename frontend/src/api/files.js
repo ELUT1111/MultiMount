@@ -38,6 +38,6 @@ export const moveFile = (mountId, src, dst) =>
 export const copyFile = (mountId, src, dst) =>
   request.post(`/files/${mountId}/copy`, { src, dst })
 
-/** 生成分享链接 */
+/** 生成分享链接 (委托给 shares API) */
 export const createShareLink = (mountId, path) =>
-  request.post(`/files/${mountId}/share`, { path })
+  request.post('/shares', { mount_id: mountId, path })

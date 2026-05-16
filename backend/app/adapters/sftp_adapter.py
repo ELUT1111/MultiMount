@@ -1,14 +1,16 @@
 import asyncio
 import mimetypes
+import queue
 import stat
 from datetime import datetime, timezone
-from io import BytesIO
 from typing import AsyncIterator
 
 import paramiko
 
 from app.adapters.base import BaseAdapter, FileInfo
 from app.adapters.registry import AdapterRegistry
+
+CHUNK_SIZE = 64 * 1024
 
 
 @AdapterRegistry.register("sftp")
@@ -33,8 +35,13 @@ class SFTPAdapter(BaseAdapter):
         return self._sftp
 
     def _resolve(self, path: str) -> str:
+        import posixpath
         cleaned = path.lstrip("/") if path != "/" else ""
-        return f"{self._base_path.rstrip('/')}/{cleaned}" if cleaned else self._base_path
+        resolved = posixpath.normpath(f"{self._base_path.rstrip('/')}/{cleaned}") if cleaned else self._base_path
+        base = self._base_path.rstrip("/")
+        if not resolved.startswith(base) and resolved != base:
+            raise ValueError("路径越界")
+        return resolved
 
     async def connect(self) -> bool:
         def _connect():
@@ -78,7 +85,6 @@ class SFTPAdapter(BaseAdapter):
                 if name in (".", ".."):
                     continue
                 is_dir = stat.S_ISDIR(entry.st_mode) if entry.st_mode else False
-                full = f"{real.rstrip('/')}/{name}"
                 rel = f"{path.rstrip('/')}/{name}" if path != "/" else f"/{name}"
                 mtime = datetime.fromtimestamp(entry.st_mtime, tz=timezone.utc) if entry.st_mtime else None
                 items.append(FileInfo(
@@ -120,30 +126,71 @@ class SFTPAdapter(BaseAdapter):
         real = self._resolve(path)
         sftp = self._get_sftp()
 
-        def _download():
-            buf = BytesIO()
-            sftp.getfo(real, buf)
-            buf.seek(0)
-            return buf.read()
+        # 使用队列桥接: 线程中读取 SFTP → 队列 → 异步生成器 yield
+        q: queue.Queue[bytes | None] = queue.Queue(maxsize=8)
+        exc_holder: list[Exception] = []
 
-        data = await asyncio.to_thread(_download)
-        chunk_size = 64 * 1024
-        for i in range(0, len(data), chunk_size):
-            yield data[i:i + chunk_size]
+        def _reader():
+            try:
+                with sftp.open(real, "rb") as f:
+                    f.prefetch()
+                    while True:
+                        chunk = f.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        q.put(chunk)
+            except Exception as e:
+                exc_holder.append(e)
+            finally:
+                q.put(None)
+
+        import threading
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+
+        loop = asyncio.get_event_loop()
+
+        while True:
+            chunk = await loop.run_in_executor(None, q.get)
+            if exc_holder:
+                raise exc_holder[0]
+            if chunk is None:
+                break
+            yield chunk
 
     async def upload(self, path: str, data: AsyncIterator[bytes], size: int | None = None) -> None:
         real = self._resolve(path)
         sftp = self._get_sftp()
 
-        buf = BytesIO()
-        async for chunk in data:
-            buf.write(chunk)
-        buf.seek(0)
+        # 使用队列桥接: 异步迭代器 → 队列 → 线程中写入 SFTP
+        q: queue.Queue[bytes | None] = queue.Queue(maxsize=16)
+        exc_holder: list[Exception] = []
+        loop = asyncio.get_event_loop()
 
-        def _upload():
-            sftp.putfo(buf, real)
+        async def _producer():
+            try:
+                async for chunk in data:
+                    q.put(chunk)
+            except Exception as e:
+                exc_holder.append(e)
+            finally:
+                q.put(None)
 
-        await asyncio.to_thread(_upload)
+        def _consumer():
+            with sftp.open(real, "wb") as f:
+                while True:
+                    chunk = q.get()
+                    if chunk is None:
+                        break
+                    if exc_holder:
+                        raise exc_holder[0]
+                    f.write(chunk)
+
+        producer_task = asyncio.create_task(_producer())
+        try:
+            await asyncio.to_thread(_consumer)
+        finally:
+            await producer_task
 
     async def delete(self, path: str) -> None:
         real = self._resolve(path)
@@ -174,7 +221,6 @@ class SFTPAdapter(BaseAdapter):
 
         def _cap():
             st = sftp.stat(self._base_path)
-            # SFTP 不直接提供容量, 返回 None
             return None
 
         return await asyncio.to_thread(_cap)

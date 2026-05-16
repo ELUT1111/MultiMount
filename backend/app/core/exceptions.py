@@ -47,7 +47,9 @@ def register_exception_handlers(app: FastAPI):
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(_request: Request, exc: Exception):
+        import logging
+        logging.getLogger("multimount").exception("未捕获异常: %s", exc)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": f"服务器内部错误: {exc!s}"},
+            content={"detail": "服务器内部错误, 请稍后重试"},
         )

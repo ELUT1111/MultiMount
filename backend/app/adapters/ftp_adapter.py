@@ -1,22 +1,45 @@
 import asyncio
 import ftplib
 import mimetypes
+import queue
+import threading
 from datetime import datetime
-from io import BytesIO
 from typing import AsyncIterator
 
 from app.adapters.base import BaseAdapter, FileInfo
 from app.adapters.registry import AdapterRegistry
 
+CHUNK_SIZE = 64 * 1024
 
-def _parse_ftp_time(time_str: str) -> datetime | None:
-    """尝试解析 FTP LIST 返回的时间格式"""
-    try:
-        # 常见格式: "May 15 14:00" 或 "May 15  2024"
-        from email.utils import parsedate_to_datetime
-        return parsedate_to_datetime(time_str)
-    except Exception:
-        return None
+
+class _AsyncChunkReader:
+    """将 AsyncIterator[bytes] 包装为 file-like 对象, 供同步 FTP SDK 使用"""
+
+    def __init__(self, aiter: AsyncIterator[bytes], loop: asyncio.AbstractEventLoop):
+        self._aiter = aiter
+        self._loop = loop
+        self._buf = b""
+        self._done = False
+
+    def read(self, n: int = -1) -> bytes:
+        if n == -1:
+            while not self._done:
+                self._fill_buf()
+            data = self._buf
+            self._buf = b""
+            return data
+        while len(self._buf) < n and not self._done:
+            self._fill_buf()
+        data = self._buf[:n]
+        self._buf = self._buf[n:]
+        return data
+
+    def _fill_buf(self):
+        try:
+            chunk = self._loop.run_until_complete(self._aiter.__anext__())
+            self._buf += chunk
+        except StopAsyncIteration:
+            self._done = True
 
 
 @AdapterRegistry.register("ftp")
@@ -119,29 +142,46 @@ class FTPAdapter(BaseAdapter):
         real = self._resolve(path)
         ftp = self._get_ftp()
 
-        def _download():
-            buf = BytesIO()
-            ftp.retrbinary(f"RETR {real}", buf.write)
-            buf.seek(0)
-            return buf.read()
+        # 使用队列桥接: 线程中通过 transfercmd 读取 → 队列 → 异步 yield
+        q: queue.Queue[bytes | None] = queue.Queue(maxsize=8)
+        exc_holder: list[Exception] = []
 
-        data = await asyncio.to_thread(_download)
-        chunk_size = 64 * 1024
-        for i in range(0, len(data), chunk_size):
-            yield data[i:i + chunk_size]
+        def _reader():
+            try:
+                with ftp.transfercmd(f"RETR {real}") as conn:
+                    while True:
+                        chunk = conn.recv(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        q.put(chunk)
+                ftp.voidresp()
+            except Exception as e:
+                exc_holder.append(e)
+            finally:
+                q.put(None)
+
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+
+        loop = asyncio.get_event_loop()
+
+        while True:
+            chunk = await loop.run_in_executor(None, q.get)
+            if exc_holder:
+                raise exc_holder[0]
+            if chunk is None:
+                break
+            yield chunk
 
     async def upload(self, path: str, data: AsyncIterator[bytes], size: int | None = None) -> None:
         real = self._resolve(path)
         ftp = self._get_ftp()
+        loop = asyncio.get_event_loop()
 
-        # 收集所有数据
-        buf = BytesIO()
-        async for chunk in data:
-            buf.write(chunk)
-        buf.seek(0)
+        reader = _AsyncChunkReader(data, loop)
 
         def _upload():
-            ftp.storbinary(f"STOR {real}", buf)
+            ftp.storbinary(f"STOR {real}", reader)
 
         await asyncio.to_thread(_upload)
 
@@ -153,7 +193,6 @@ class FTPAdapter(BaseAdapter):
             try:
                 ftp.delete(real)
             except ftplib.error_perm:
-                # 可能是目录
                 ftp.rmd(real)
 
         await asyncio.to_thread(_delete)

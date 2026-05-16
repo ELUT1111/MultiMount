@@ -2,6 +2,8 @@ import request from '@/utils/request'
 
 export const listUsers = (params) => request.get('/users', { params })
 
+export const listAllUsers = () => request.get('/users/all')
+
 export const getMe = () => request.get('/users/me')
 
 export const createUser = (data) => request.post('/users', data)

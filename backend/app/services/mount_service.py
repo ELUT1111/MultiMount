@@ -114,6 +114,18 @@ async def delete_mount(db: AsyncSession, mount_id: int, user_id: int | None = No
     if not is_admin:
         if mount.user_id is None or mount.user_id != user_id:
             raise BadRequestException("只能删除自己创建的挂载")
+
+    # 如果管理员删除他人挂载, 通知挂载创建者
+    if is_admin and mount.user_id is not None and mount.user_id != user_id:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db, mount.user_id,
+            "mount_deleted",
+            "挂载被管理员删除",
+            f"您的挂载 \"{mount.name}\" 已被管理员删除。",
+            related_id=mount.id,
+        )
+
     await db.delete(mount)
     await db.flush()
 
@@ -121,6 +133,7 @@ async def delete_mount(db: AsyncSession, mount_id: int, user_id: int | None = No
 async def test_mount_connection(db: AsyncSession, mount_id: int) -> bool:
     """测试挂载点连接"""
     mount = await get_mount(db, mount_id)
+    previous_status = mount.status
     adapter = _get_adapter(mount)
     try:
         ok = await adapter.test_connection()
@@ -130,10 +143,34 @@ async def test_mount_connection(db: AsyncSession, mount_id: int) -> bool:
         else:
             mount.status = "offline"
         await db.flush()
+
+        # 连接失败且之前是在线状态, 通知挂载创建者
+        if not ok and previous_status == "online" and mount.user_id:
+            from app.services.notification_service import create_notification
+            await create_notification(
+                db, mount.user_id,
+                "mount_status",
+                "挂载连接失败",
+                f"挂载 \"{mount.name}\" 连接测试失败, 状态已变为离线。",
+                related_id=mount.id,
+            )
+
         return ok
     except Exception:
         mount.status = "offline"
         await db.flush()
+
+        # 异常也通知
+        if previous_status == "online" and mount.user_id:
+            from app.services.notification_service import create_notification
+            await create_notification(
+                db, mount.user_id,
+                "mount_status",
+                "挂载连接异常",
+                f"挂载 \"{mount.name}\" 连接时发生异常, 状态已变为离线。",
+                related_id=mount.id,
+            )
+
         return False
 
 

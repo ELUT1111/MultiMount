@@ -9,6 +9,8 @@ from botocore.config import Config as BotoConfig
 from app.adapters.base import BaseAdapter, FileInfo
 from app.adapters.registry import AdapterRegistry
 
+CHUNK_SIZE = 64 * 1024
+
 
 @AdapterRegistry.register("s3")
 class S3Adapter(BaseAdapter):
@@ -73,7 +75,6 @@ class S3Adapter(BaseAdapter):
             items = []
             seen = set()
 
-            # 列出子目录 (CommonPrefixes)
             paginator = client.get_paginator("list_objects_v2")
             for page in paginator.paginate(
                 Bucket=self._bucket_name, Prefix=prefix, Delimiter="/"
@@ -133,31 +134,85 @@ class S3Adapter(BaseAdapter):
         client = self._get_client()
         key = self._to_key(path)
 
-        def _download():
+        def _get_body():
             resp = client.get_object(Bucket=self._bucket_name, Key=key)
-            return resp["Body"].read()
+            return resp["Body"]
 
-        data = await asyncio.to_thread(_download)
-        for i in range(0, len(data), 64 * 1024):
-            yield data[i:i + 64 * 1024]
+        body = await asyncio.to_thread(_get_body)
+
+        def _read_chunk():
+            return body.read(CHUNK_SIZE)
+
+        while True:
+            chunk = await asyncio.to_thread(_read_chunk)
+            if not chunk:
+                break
+            yield chunk
 
     async def upload(self, path: str, data: AsyncIterator[bytes], size: int | None = None) -> None:
         client = self._get_client()
         key = self._to_key(path)
-
-        buf = b""
-        async for chunk in data:
-            buf += chunk
-
         content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
 
-        def _upload():
-            client.put_object(
-                Bucket=self._bucket_name, Key=key, Body=buf,
-                ContentType=content_type,
-            )
+        # 小文件 (< 8MB): 内存缓冲 + put_object
+        # 大文件: multipart upload
+        SMALL_THRESHOLD = 8 * 1024 * 1024
 
-        await asyncio.to_thread(_upload)
+        if size is not None and size <= SMALL_THRESHOLD:
+            buf = b""
+            async for chunk in data:
+                buf += chunk
+
+            def _upload():
+                client.put_object(
+                    Bucket=self._bucket_name, Key=key, Body=buf,
+                    ContentType=content_type,
+                )
+            await asyncio.to_thread(_upload)
+        else:
+            # Multipart upload — 真正流式
+            def _init():
+                return client.create_multipart_upload(
+                    Bucket=self._bucket_name, Key=key,
+                    ContentType=content_type,
+                )
+
+            resp = await asyncio.to_thread(_init)
+            upload_id = resp["UploadId"]
+            parts = []
+            part_num = 0
+
+            try:
+                async for chunk in data:
+                    part_num += 1
+                    part_data = chunk
+
+                    def _upload_part():
+                        return client.upload_part(
+                            Bucket=self._bucket_name, Key=key,
+                            UploadId=upload_id, PartNumber=part_num,
+                            Body=part_data,
+                        )
+
+                    part_resp = await asyncio.to_thread(_upload_part)
+                    parts.append({"PartNumber": part_num, "ETag": part_resp["ETag"]})
+
+                def _complete():
+                    client.complete_multipart_upload(
+                        Bucket=self._bucket_name, Key=key,
+                        UploadId=upload_id,
+                        MultipartUpload={"Parts": parts},
+                    )
+
+                await asyncio.to_thread(_complete)
+            except Exception:
+                def _abort():
+                    client.abort_multipart_upload(
+                        Bucket=self._bucket_name, Key=key,
+                        UploadId=upload_id,
+                    )
+                await asyncio.to_thread(_abort)
+                raise
 
     async def delete(self, path: str) -> None:
         client = self._get_client()

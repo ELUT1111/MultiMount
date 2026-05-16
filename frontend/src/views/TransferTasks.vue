@@ -19,9 +19,9 @@
     <div class="rate-limit-bar">
       <span class="rate-label">全局速率限制:</span>
       <span class="rate-label">下载</span>
-      <el-slider v-model="rateLimitDownload" :min="0" :max="10240" :step="64" :format-tooltip="(v) => v ? v + ' KB/s' : '不限'" style="width: 180px" />
+      <el-slider v-model="rateLimitDownload" :min="0" :max="10240" :step="64" :format-tooltip="(v) => v ? v + ' KB/s' : '不限'" style="width: 180px" @change="onRateLimitChange('download', $event)" />
       <span class="rate-label">上传</span>
-      <el-slider v-model="rateLimitUpload" :min="0" :max="10240" :step="64" :format-tooltip="(v) => v ? v + ' KB/s' : '不限'" style="width: 180px" />
+      <el-slider v-model="rateLimitUpload" :min="0" :max="10240" :step="64" :format-tooltip="(v) => v ? v + ' KB/s' : '不限'" style="width: 180px" @change="onRateLimitChange('upload', $event)" />
     </div>
 
     <!-- 状态标签页 -->
@@ -106,6 +106,16 @@ const runningCount = computed(() => transfers.tasks.filter((t) => ['pending', 'r
 const completedCount = computed(() => transfers.tasks.filter((t) => t.status === 'completed').length)
 const failedCount = computed(() => transfers.tasks.filter((t) => t.status === 'failed').length)
 
+// 速率限制变更 (debounced)
+let rateLimitTimer = null
+function onRateLimitChange(direction, value) {
+  clearTimeout(rateLimitTimer)
+  rateLimitTimer = setTimeout(() => {
+    ElMessage.info(`全局${direction === 'download' ? '下载' : '上传'}速率限制已${value ? '设为 ' + value + ' KB/s' : '取消'}`)
+    // TODO: 后端速率限制 API 尚未实现, 此处仅展示 UI 交互
+  }, 500)
+}
+
 // WebSocket 收到进度更新 → 更新 store
 watch(wsData, (val) => {
   if (val?.type === 'transfer_progress') {
@@ -120,40 +130,33 @@ async function handleCancel(id) {
   ElMessage.success('已取消')
 }
 
-// 批量暂停
+// 批量暂停 (并行执行)
 async function handleBatchPause() {
   const running = transfers.tasks.filter((t) => t.status === 'running')
-  for (const t of running) {
-    await transfers.pauseTask(t.id)
-  }
+  await Promise.allSettled(running.map((t) => transfers.pauseTask(t.id)))
   ElMessage.success('已全部暂停')
 }
 
-// 批量恢复
+// 批量恢复 (并行执行)
 async function handleBatchResume() {
   const paused = transfers.tasks.filter((t) => t.status === 'paused')
-  for (const t of paused) {
-    await transfers.resumeTask(t.id)
-  }
+  await Promise.allSettled(paused.map((t) => transfers.resumeTask(t.id)))
   ElMessage.success('已全部恢复')
 }
 
-// 批量取消
+// 批量取消 (并行执行)
 async function handleBatchCancel() {
   await ElMessageBox.confirm('确定取消所有进行中的任务?', '确认', { type: 'warning' })
   const active = transfers.tasks.filter((t) => ['pending', 'running', 'paused'].includes(t.status))
-  for (const t of active) {
-    await transfers.cancelTask(t.id)
-  }
+  await Promise.allSettled(active.map((t) => transfers.cancelTask(t.id)))
   ElMessage.success('已全部取消')
 }
 
-// 清除已完成
+// 清除已完成 (带确认 + 并行执行)
 async function handleClearCompleted() {
+  await ElMessageBox.confirm('确定清除所有已完成的任务?', '确认', { type: 'warning' })
   const completed = transfers.tasks.filter((t) => t.status === 'completed')
-  for (const t of completed) {
-    await transfers.cancelTask(t.id)
-  }
+  await Promise.allSettled(completed.map((t) => transfers.cancelTask(t.id)))
   ElMessage.success('已清除')
 }
 

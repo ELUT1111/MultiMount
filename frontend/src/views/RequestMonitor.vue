@@ -7,18 +7,24 @@
 
     <!-- 顶部统计卡片 -->
     <div class="stats-row">
-      <div class="stat-card">
-        <div class="stat-value">{{ stats.total_requests }}</div>
-        <div class="stat-label">总请求数</div>
+      <div v-if="statsLoading" v-for="i in 3" :key="i" class="stat-card">
+        <div class="skeleton skeleton-title" style="width: 60%; margin: 0 auto 8px;" />
+        <div class="skeleton skeleton-text" style="width: 40%; margin: 0 auto;" />
       </div>
-      <div class="stat-card">
-        <div class="stat-value">{{ stats.today_requests }}</div>
-        <div class="stat-label">今日请求</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{{ stats.active_ips_today }}</div>
-        <div class="stat-label">今日活跃 IP</div>
-      </div>
+      <template v-else>
+        <div class="stat-card">
+          <div class="stat-value">{{ stats.total_requests }}</div>
+          <div class="stat-label">总请求数</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ stats.today_requests }}</div>
+          <div class="stat-label">今日请求</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ stats.active_ips_today }}</div>
+          <div class="stat-label">今日活跃 IP</div>
+        </div>
+      </template>
     </div>
 
     <!-- Tab 切换 -->
@@ -128,6 +134,7 @@ import { getAccessLogs, getAccessStats, getIPBlacklist, addIPBlacklist, removeIP
 
 // ── 状态 ────────────────────────────────────────────────────
 const activeTab = ref('logs')
+const statsLoading = ref(false)
 const stats = reactive({ total_requests: 0, today_requests: 0, active_ips_today: 0, top_ips: [], top_paths: [] })
 
 // 日志
@@ -145,10 +152,13 @@ const newReason = ref('')
 
 // ── 数据获取 ─────────────────────────────────────────────────
 async function fetchStats() {
+  statsLoading.value = true
   try {
     const data = await getAccessStats()
     Object.assign(stats, data)
-  } catch { /* ignore */ }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '获取统计数据失败')
+  } finally { statsLoading.value = false }
 }
 
 async function fetchLogs() {
@@ -157,16 +167,18 @@ async function fetchLogs() {
     const data = await getAccessLogs({ page: logFilter.page, page_size: logFilter.page_size, ip: logFilter.ip })
     logs.value = data.items
     logTotal.value = data.total
-  } catch { /* ignore */ }
-  finally { logsLoading.value = false }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '获取访问日志失败')
+  } finally { logsLoading.value = false }
 }
 
 async function fetchBlacklist() {
   blLoading.value = true
   try {
     blacklist.value = await getIPBlacklist()
-  } catch { /* ignore */ }
-  finally { blLoading.value = false }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '获取黑名单失败')
+  } finally { blLoading.value = false }
 }
 
 function onTabChange(tab) {
@@ -175,9 +187,16 @@ function onTabChange(tab) {
   else if (tab === 'rankings') fetchStats()
 }
 
+// ── IP 格式校验 ─────────────────────────────────────────────
+const IPv4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\.(?!$)|$)){4}$/
+const IPv6_RE = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/
+function isValidIP(ip) { return IPv4_RE.test(ip) || IPv6_RE.test(ip) }
+
 // ── 黑名单操作 ───────────────────────────────────────────────
 async function handleAdd() {
-  if (!newIp.value.trim()) return ElMessage.warning('请输入 IP 地址')
+  const ip = newIp.value.trim()
+  if (!ip) return ElMessage.warning('请输入 IP 地址')
+  if (!isValidIP(ip)) return ElMessage.warning('请输入有效的 IP 地址')
   addLoading.value = true
   try {
     await addIPBlacklist({ ip_address: newIp.value.trim(), reason: newReason.value.trim() || null })
@@ -185,8 +204,9 @@ async function handleAdd() {
     newIp.value = ''
     newReason.value = ''
     await fetchBlacklist()
-  } catch { /* error handled by interceptor */ }
-  finally { addLoading.value = false }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '添加黑名单失败')
+  } finally { addLoading.value = false }
 }
 
 async function handleRemove(ip) {
@@ -195,15 +215,20 @@ async function handleRemove(ip) {
     await removeIPBlacklist(ip)
     ElMessage.success(`已解封 ${ip}`)
     await fetchBlacklist()
-  } catch { /* error handled by interceptor */ }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '解封失败')
+  }
 }
 
 async function quickBlock(ip) {
+  if (!isValidIP(ip)) return ElMessage.warning('IP 格式异常, 无法拉黑')
   await ElMessageBox.confirm(`确定拉黑 ${ip}?`, '确认', { type: 'warning' })
   try {
     await addIPBlacklist({ ip_address: ip, reason: '请求监控中手动拉黑' })
     ElMessage.success(`已拉黑 ${ip}`)
-  } catch { /* error handled by interceptor */ }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '拉黑失败')
+  }
 }
 
 // ── 辅助 ─────────────────────────────────────────────────────
@@ -259,4 +284,11 @@ onMounted(() => {
 }
 .rank-key { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rank-val { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .stats-row { flex-wrap: wrap; }
+  .stat-card { min-width: calc(50% - 8px); }
+  .ranking-grid { grid-template-columns: 1fr; }
+}
 </style>

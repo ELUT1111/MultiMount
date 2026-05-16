@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +8,7 @@ from app.models.user import User
 from app.schemas.mount import MountCreate, MountOut, MountUpdate
 from app.services import mount_service
 from app.core.mount_permissions import check_basic_permission
+from app.services.mount_permission_service import check_mount_access
 
 router = APIRouter()
 
@@ -45,14 +44,32 @@ async def _enrich_owner_names(mounts: list[MountOut], db: AsyncSession) -> list[
     return mounts
 
 
+async def _enrich_my_level(mounts: list[MountOut], user, db: AsyncSession) -> list[MountOut]:
+    """批量填充当前用户对每个挂载的权限等级"""
+    is_admin = user.role and user.role.name == "admin"
+    for m in mounts:
+        if is_admin:
+            m.my_level = "readwrite"
+        elif m.user_id == user.id:
+            m.my_level = "readwrite"
+        else:
+            try:
+                m.my_level = await check_mount_access(db, m.id, user, "read")
+            except HTTPException:
+                m.my_level = "none"
+    return mounts
+
+
 @router.get("", response_model=list[MountOut])
 async def list_mounts(
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    mounts = await mount_service.list_mounts(db)
-    out = [_mount_to_out(m) for m in mounts]
-    return await _enrich_owner_names(out, db)
+    all_mounts = await mount_service.list_mounts(db)
+    out = [_mount_to_out(m) for m in all_mounts]
+    out = await _enrich_owner_names(out, db)
+    out = await _enrich_my_level(out, user, db)
+    return out
 
 
 @router.post("", response_model=MountOut, status_code=201)
@@ -71,11 +88,14 @@ async def create_mount(
 @router.get("/{mount_id}", response_model=MountOut)
 async def get_mount(
     mount_id: int,
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     mount = await mount_service.get_mount(db, mount_id)
-    return _mount_to_out(mount)
+    out = _mount_to_out(mount)
+    out = (await _enrich_owner_names([out], db))[0]
+    out = (await _enrich_my_level([out], user, db))[0]
+    return out
 
 
 @router.put("/{mount_id}", response_model=MountOut)

@@ -1,7 +1,7 @@
 import mimetypes
 
 
-def format_size(size_bytes: int) -> str:
+def format_size(size_bytes: int) -> str:  # noqa: E302
     """将字节数格式化为人类可读的大小"""
     if size_bytes < 0:
         return "未知"

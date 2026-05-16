@@ -1,5 +1,5 @@
 <!--
-  挂载管理页面 — 挂载源的增删改查, 3步引导添加, 筛选, 测试连接。
+  挂载管理页面 — 挂载源的增删改查, 3步引导添加, 筛选, 测试连接, 权限管理。
 -->
 <template>
   <div class="mount-manager">
@@ -30,7 +30,12 @@
               <div class="mount-type">{{ typeLabel(mount.type) }}</div>
             </div>
           </div>
-          <span class="status-dot" :class="mount.status" :title="statusLabel(mount.status)" />
+          <div class="card-right">
+            <el-tag v-if="mount.my_level" :type="levelTagType(mount.my_level)" size="small" effect="plain">
+              {{ levelLabel(mount.my_level) }}
+            </el-tag>
+            <span class="status-dot" :class="mount.status" :title="statusLabel(mount.status)" />
+          </div>
         </div>
         <div class="card-body">
           <div class="info-row"><span>地址:</span> <span>{{ mount.config.host || mount.config.url || mount.config.path || '-' }}{{ mount.config.port ? ':' + mount.config.port : '' }}</span></div>
@@ -40,10 +45,12 @@
           <div class="info-row" v-if="mount.last_connected_at"><span>最后连接:</span> <span>{{ formatTime(mount.last_connected_at) }}</span></div>
         </div>
         <div class="card-footer">
-          <el-button size="small" @click="handleTest(mount)" :loading="testingId === mount.id">测试连接</el-button>
-          <el-button size="small" @click="handleEdit(mount)">编辑</el-button>
-          <el-button size="small" type="warning" plain @click="handleUnmount(mount)">卸载</el-button>
-          <el-button size="small" type="danger" plain @click="handleDelete(mount)">删除</el-button>
+          <el-button size="small" @click="handleTest(mount)" :loading="testingId === mount.id" v-if="canEdit(mount)">测试连接</el-button>
+          <el-button size="small" @click="handleEdit(mount)" v-if="canEdit(mount)">编辑</el-button>
+          <el-button size="small" type="warning" plain @click="handleUnmount(mount)" v-if="canEdit(mount)">卸载</el-button>
+          <el-button size="small" type="danger" plain @click="handleDelete(mount)" v-if="canEdit(mount)">删除</el-button>
+          <el-button size="small" type="primary" plain @click="openPermDialog(mount)" v-if="canManagePerms(mount)">权限管理</el-button>
+          <el-button size="small" type="success" plain @click="openRequestDialog(mount)" v-if="mount.my_level === 'none'">申请权限</el-button>
         </div>
       </div>
     </div>
@@ -128,6 +135,68 @@
       </template>
     </el-dialog>
 
+    <!-- 权限管理对话框 -->
+    <el-dialog v-model="showPermDialog" title="权限管理" width="520px" @close="resetPermDialog">
+      <div class="perm-header">
+        <span>挂载: <strong>{{ permMount?.name }}</strong></span>
+      </div>
+
+      <!-- 已授权用户列表 -->
+      <div class="perm-section">
+        <div class="perm-section-title">已授权用户</div>
+        <div v-if="permLoading" v-loading="true" style="height: 60px" />
+        <el-empty v-else-if="permList.length === 0" description="暂无授权用户" :image-size="48" />
+        <div v-else class="perm-list">
+          <div v-for="p in permList" :key="p.user_id" class="perm-item">
+            <div class="perm-user">
+              <span class="perm-username">{{ permUserMap[p.user_id] || `用户 #${p.user_id}` }}</span>
+              <el-tag :type="p.level === 'readwrite' ? 'success' : 'info'" size="small">{{ levelLabel(p.level) }}</el-tag>
+            </div>
+            <el-button size="small" type="danger" text @click="handleRevokePerm(p.user_id)">撤销</el-button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 授予新权限 -->
+      <el-divider />
+      <div class="perm-section">
+        <div class="perm-section-title">授予用户权限</div>
+        <el-form :inline="true" size="default">
+          <el-form-item label="用户">
+            <el-select v-model="grantForm.user_id" placeholder="选择用户" filterable style="width: 180px">
+              <el-option v-for="u in allUsers" :key="u.id" :label="u.username" :value="u.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="权限">
+            <el-select v-model="grantForm.level" style="width: 120px">
+              <el-option label="只读" value="read" />
+              <el-option label="读写" value="readwrite" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="handleGrantPerm" :loading="granting">授予</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
+    </el-dialog>
+
+    <!-- 申请权限对话框 -->
+    <el-dialog v-model="showRequestDialog" title="申请挂载权限" width="420px">
+      <p>申请 <strong>{{ requestMount?.name }}</strong> 的访问权限</p>
+      <el-form label-width="80px">
+        <el-form-item label="权限等级">
+          <el-radio-group v-model="requestLevel">
+            <el-radio value="read">只读</el-radio>
+            <el-radio value="readwrite">读写</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showRequestDialog = false">取消</el-button>
+        <el-button type="primary" :loading="requesting" @click="handleRequestAccess">发送申请</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 文件夹选择器 -->
     <FolderPicker v-model="showFolderPicker" @select="onFolderSelected" />
   </div>
@@ -138,10 +207,14 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { Plus, Refresh, FolderOpened, Connection, Monitor, Cloudy } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useMountsStore } from '@/stores/mounts'
+import { useAuthStore } from '@/stores/auth'
 import { formatSize, formatTime } from '@/utils/format'
 import FolderPicker from '@/components/common/FolderPicker.vue'
+import { getMountPermissions, grantPermission, revokePermission, requestAccess } from '@/api/mount_permissions'
+import { listAllUsers } from '@/api/users'
 
 const mounts = useMountsStore()
+const auth = useAuthStore()
 const showAddDialog = ref(false)
 const addStep = ref(0)
 const saving = ref(false)
@@ -154,6 +227,22 @@ const showFolderPicker = ref(false)
 // 筛选状态
 const filterType = ref('')
 const filterStatus = ref('')
+
+// 权限管理状态
+const showPermDialog = ref(false)
+const permMount = ref(null)
+const permList = ref([])
+const permLoading = ref(false)
+const permUserMap = ref({})
+const allUsers = ref([])
+const granting = ref(false)
+const grantForm = reactive({ user_id: null, level: 'read' })
+
+// 申请权限状态
+const showRequestDialog = ref(false)
+const requestMount = ref(null)
+const requestLevel = ref('read')
+const requesting = ref(false)
 
 const mountTypes = [
   { value: 'local', label: '本地文件系统', icon: FolderOpened },
@@ -187,6 +276,17 @@ const filteredMounts = computed(() => {
 const typeIcon = (t) => ({ local: FolderOpened, ftp: Connection, sftp: Connection, webdav: Monitor, oss: Cloudy, s3: Cloudy }[t] || Connection)
 const typeLabel = (t) => ({ local: '本地存储', ftp: 'FTP', sftp: 'SFTP', webdav: 'WebDAV', oss: '阿里云 OSS', s3: 'Amazon S3' }[t] || t)
 const statusLabel = (s) => ({ online: '在线', offline: '离线', connecting: '连接中' }[s] || s)
+const levelLabel = (l) => ({ read: '只读', readwrite: '读写', none: '无权限' }[l] || l)
+const levelTagType = (l) => ({ read: 'info', readwrite: 'success', none: 'danger' }[l] || 'info')
+
+// 权限判断
+function canEdit(mount) {
+  return mount.my_level === 'readwrite'
+}
+
+function canManagePerms(mount) {
+  return mount.my_level === 'readwrite'
+}
 
 async function handleTest(mount) {
   testingId.value = mount.id
@@ -287,6 +387,91 @@ async function handleSave() {
   }
 }
 
+// ===== 权限管理 =====
+
+async function openPermDialog(mount) {
+  permMount.value = mount
+  showPermDialog.value = true
+  permLoading.value = true
+  grantForm.user_id = null
+  grantForm.level = 'read'
+
+  try {
+    const [perms, users] = await Promise.all([
+      getMountPermissions(mount.id),
+      listAllUsers(),
+    ])
+    permList.value = perms
+    allUsers.value = users
+    // 构建 user_id → username 映射
+    const map = {}
+    users.forEach(u => { map[u.id] = u.username })
+    permUserMap.value = map
+  } catch {
+    ElMessage.error('加载权限数据失败')
+  } finally {
+    permLoading.value = false
+  }
+}
+
+async function handleGrantPerm() {
+  if (!grantForm.user_id) return ElMessage.warning('请选择用户')
+  granting.value = true
+  try {
+    await grantPermission(permMount.value.id, { user_id: grantForm.user_id, level: grantForm.level })
+    ElMessage.success('权限已授予')
+    grantForm.user_id = null
+    // 刷新列表
+    permList.value = await getMountPermissions(permMount.value.id)
+    mounts.fetchMounts()
+  } catch {
+    ElMessage.error('授权失败')
+  } finally {
+    granting.value = false
+  }
+}
+
+async function handleRevokePerm(userId) {
+  await ElMessageBox.confirm('确定撤销该用户的权限？', '确认', { type: 'warning' })
+  try {
+    await revokePermission(permMount.value.id, userId)
+    ElMessage.success('权限已撤销')
+    permList.value = await getMountPermissions(permMount.value.id)
+    mounts.fetchMounts()
+  } catch {
+    ElMessage.error('撤销失败')
+  }
+}
+
+function resetPermDialog() {
+  permMount.value = null
+  permList.value = []
+  permUserMap.value = {}
+  grantForm.user_id = null
+  grantForm.level = 'read'
+}
+
+// ===== 申请权限 =====
+
+function openRequestDialog(mount) {
+  requestMount.value = mount
+  requestLevel.value = 'read'
+  showRequestDialog.value = true
+}
+
+async function handleRequestAccess() {
+  requesting.value = true
+  try {
+    await requestAccess(requestMount.value.id, { level: requestLevel.value })
+    ElMessage.success('权限申请已发送，请等待挂载所有者审批')
+    showRequestDialog.value = false
+  } catch {
+    ElMessage.error('申请失败')
+  } finally {
+    requesting.value = false
+  }
+}
+
 onMounted(() => mounts.fetchMounts())
 </script>
 
@@ -303,10 +488,11 @@ onMounted(() => mounts.fetchMounts())
 .mount-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
 .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
 .card-left { display: flex; gap: 12px; align-items: center; }
+.card-right { display: flex; align-items: center; gap: 8px; }
 .mount-name { font-weight: 600; font-size: 15px; }
 .mount-type { font-size: 12px; color: var(--text-secondary); }
 /* 彩色状态指示灯 */
-.status-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+.status-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
 .status-dot.online { background: var(--success-color); box-shadow: 0 0 6px rgba(103,194,58,0.4); }
 .status-dot.offline { background: var(--danger-color); box-shadow: 0 0 6px rgba(245,108,108,0.4); }
 .status-dot.connecting { background: var(--warning-color); box-shadow: 0 0 6px rgba(230,162,60,0.4); animation: pulse 1.5s infinite; }
@@ -323,4 +509,13 @@ onMounted(() => mounts.fetchMounts())
 }
 .type-card:hover { border-color: var(--primary-color); background: rgba(64,158,255,0.04); }
 .type-card.selected { border-color: var(--primary-color); background: rgba(64,158,255,0.08); }
+
+/* 权限管理对话框 */
+.perm-header { margin-bottom: 16px; font-size: 14px; }
+.perm-section { margin-bottom: 8px; }
+.perm-section-title { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+.perm-list { display: flex; flex-direction: column; gap: 8px; }
+.perm-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--bg-color); border-radius: 8px; }
+.perm-user { display: flex; align-items: center; gap: 8px; }
+.perm-username { font-size: 14px; }
 </style>

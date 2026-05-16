@@ -1,13 +1,15 @@
 import asyncio
 import mimetypes
 from datetime import datetime
-from io import BytesIO
 from typing import AsyncIterator
 
+import requests
 from webdav3.client import Client
 
 from app.adapters.base import BaseAdapter, FileInfo
 from app.adapters.registry import AdapterRegistry
+
+CHUNK_SIZE = 64 * 1024
 
 
 def _parse_webdav_time(time_str: str | None) -> datetime | None:
@@ -32,12 +34,19 @@ class WebDAVAdapter(BaseAdapter):
             "webdav_password": password,
             "webdav_verify": verify_ssl,
         }
+        self._base_url = url.rstrip("/")
+        self._username = username
+        self._password = password
+        self._verify_ssl = verify_ssl
         self._client: Client | None = None
 
     def _get_client(self) -> Client:
         if self._client is None:
             raise ConnectionError("WebDAV 未连接")
         return self._client
+
+    def _get_url(self, path: str) -> str:
+        return f"{self._base_url}{path}"
 
     async def connect(self) -> bool:
         def _connect():
@@ -102,28 +111,69 @@ class WebDAVAdapter(BaseAdapter):
         return await asyncio.to_thread(_info)
 
     async def download(self, path: str) -> AsyncIterator[bytes]:
-        client = self._get_client()
-        buf = BytesIO()
+        url = self._get_url(path)
 
         def _download():
-            client.download_from(buff=buf, path=path)
+            resp = requests.get(
+                url, auth=(self._username, self._password),
+                verify=self._verify_ssl, stream=True,
+            )
+            resp.raise_for_status()
+            return resp
 
-        await asyncio.to_thread(_download)
-        buf.seek(0)
-        while chunk := buf.read(64 * 1024):
+        resp = await asyncio.to_thread(_download)
+
+        def _read_chunk():
+            return resp.raw.read(CHUNK_SIZE)
+
+        while True:
+            chunk = await asyncio.to_thread(_read_chunk)
+            if not chunk:
+                break
             yield chunk
 
     async def upload(self, path: str, data: AsyncIterator[bytes], size: int | None = None) -> None:
-        client = self._get_client()
-        buf = BytesIO()
-        async for chunk in data:
-            buf.write(chunk)
-        buf.seek(0)
+        url = self._get_url(path)
+        content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+
+        # 使用 requests 直接上传, 支持 chunked transfer encoding
+        import queue as queue_mod
+        q: queue_mod.Queue[bytes | None] = queue_mod.Queue(maxsize=16)
+        exc_holder: list[Exception] = []
+        loop = asyncio.get_event_loop()
+
+        async def _producer():
+            try:
+                async for chunk in data:
+                    q.put(chunk)
+            except Exception as e:
+                exc_holder.append(e)
+            finally:
+                q.put(None)
+
+        def _chunk_iter():
+            while True:
+                chunk = q.get()
+                if chunk is None:
+                    break
+                if exc_holder:
+                    raise exc_holder[0]
+                yield chunk
 
         def _upload():
-            client.upload_to(buff=buf, path=path)
+            resp = requests.put(
+                url, data=_chunk_iter(),
+                auth=(self._username, self._password),
+                verify=self._verify_ssl,
+                headers={"Content-Type": content_type},
+            )
+            resp.raise_for_status()
 
-        await asyncio.to_thread(_upload)
+        producer_task = asyncio.create_task(_producer())
+        try:
+            await asyncio.to_thread(_upload)
+        finally:
+            await producer_task
 
     async def delete(self, path: str) -> None:
         client = self._get_client()

@@ -9,6 +9,9 @@ from app.services.ip_blacklist_service import is_blocked
 
 logger = logging.getLogger("multimount.access")
 
+# 后台任务引用集合, 防止 GC 回收未完成的 asyncio.Task
+_bg_tasks: set = set()
+
 
 # ── IP 黑名单拦截中间件 ──────────────────────────────────────
 
@@ -64,7 +67,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # 异步写入访问日志（跳过健康检查等高频无意义路径）
         path = request.url.path
         if not path.startswith("/health"):
-            asyncio.create_task(_write_access_log(
+            task = asyncio.create_task(_write_access_log(
                 ip=request.client.host if request.client else "unknown",
                 method=request.method,
                 path=path,
@@ -73,6 +76,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 user_agent=request.headers.get("user-agent"),
                 user_id=None,  # 简化: 不在中间件层解析 JWT
             ))
+            _bg_tasks.add(task)
+            task.add_done_callback(_bg_tasks.discard)
 
         return response
 

@@ -14,8 +14,30 @@
 </template>
 
 <script setup>
+import { watch, onMounted } from 'vue'
 import TopNavbar from '@/components/layout/TopNavbar.vue'
 import SidePanel from '@/components/layout/SidePanel.vue'
+import { useWebSocket } from '@/composables/useWebSocket'
+import { useNotificationsStore } from '@/stores/notifications'
+
+const notifications = useNotificationsStore()
+
+// 全局通知 WebSocket
+const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+const { data: wsData, connect: wsConnect } = useWebSocket(
+  `${wsProtocol}//${location.host}/api/v1/notifications/ws`
+)
+
+watch(wsData, (val) => {
+  if (val?.type?.startsWith('notification')) {
+    notifications.handleWsMessage(val)
+  }
+})
+
+onMounted(() => {
+  wsConnect()
+  notifications.fetchUnreadCount()
+})
 </script>
 
 <style scoped>

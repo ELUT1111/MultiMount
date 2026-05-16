@@ -40,6 +40,14 @@ async def lifespan(_app: FastAPI):
         await init_cache(db)
     logger.info("默认角色和管理员用户初始化完成")
 
+    # 安全警告
+    if settings.JWT_SECRET_KEY in ("CHANGE_ME_TO_A_RANDOM_SECRET_KEY", "multimount-dev-secret-key-change-in-production"):
+        logger.warning("⚠ JWT_SECRET_KEY 使用默认值, 请在 .env 中设置随机密钥!")
+    if not settings.ENCRYPTION_KEY:
+        logger.warning("⚠ ENCRYPTION_KEY 为空, 每次重启后已加密数据将无法解密! 请在 .env 中设置固定密钥")
+    if settings.DEBUG:
+        logger.warning("⚠ DEBUG=True, 生产环境请设置 DEBUG=False")
+
     yield
 
     logger.info("MultiMount 正在关闭...")

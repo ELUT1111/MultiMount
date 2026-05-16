@@ -36,7 +36,7 @@
 
     <!-- 拖拽上传遮罩层 -->
     <div v-if="dragging" class="drag-overlay">
-      <el-icon :size="48" color="#409eff"><UploadFilled /></el-icon>
+      <el-icon :size="48" color="var(--primary-color)"><UploadFilled /></el-icon>
       <p>拖拽文件至此上传</p>
     </div>
 
@@ -60,7 +60,7 @@
           <el-table-column v-if="batchMode" type="selection" width="40" />
           <el-table-column width="40">
             <template #default="{ row }">
-              <el-icon v-if="row.is_dir" color="#409eff"><Folder /></el-icon>
+              <el-icon v-if="row.is_dir" color="var(--primary-color)"><Folder /></el-icon>
               <el-icon v-else><Document /></el-icon>
             </template>
           </el-table-column>
@@ -96,7 +96,7 @@
               <el-checkbox :model-value="selectedFiles.some(f => f.path === file.path)" @click.stop />
             </div>
             <div class="card-icon">
-              <el-icon :size="40" v-if="file.is_dir" color="#409eff"><Folder /></el-icon>
+              <el-icon :size="40" v-if="file.is_dir" color="var(--primary-color)"><Folder /></el-icon>
               <el-icon :size="40" v-else><Document /></el-icon>
             </div>
             <div class="card-name" :title="file.name">{{ file.name }}</div>

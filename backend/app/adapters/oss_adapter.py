@@ -8,6 +8,8 @@ import oss2
 from app.adapters.base import BaseAdapter, FileInfo
 from app.adapters.registry import AdapterRegistry
 
+CHUNK_SIZE = 64 * 1024
+
 
 @AdapterRegistry.register("oss")
 class OSSAdapter(BaseAdapter):
@@ -42,7 +44,6 @@ class OSSAdapter(BaseAdapter):
     async def connect(self) -> bool:
         def _connect():
             self._bucket = oss2.Bucket(self._auth, self._endpoint, self._bucket_name)
-            # 验证连接
             self._bucket.get_bucket_info()
             return True
         return await asyncio.to_thread(_connect)
@@ -66,19 +67,14 @@ class OSSAdapter(BaseAdapter):
             items = []
             seen = set()
             for obj in oss2.ObjectIterator(bucket, prefix=prefix, delimiter="/"):
-                # 子目录 (common prefix)
                 if hasattr(obj, "is_prefix") and obj.is_prefix:
                     dir_name = obj.key[len(prefix):].rstrip("/")
                     if dir_name and "/" not in dir_name:
                         items.append(FileInfo(
                             name=dir_name,
                             path=f"{path.rstrip('/')}/{dir_name}" if path != "/" else f"/{dir_name}",
-                            is_dir=True,
-                            size=0,
-                            modified_at=None,
-                            created_at=None,
-                            mime_type=None,
-                            permissions=None,
+                            is_dir=True, size=0,
+                            modified_at=None, created_at=None, mime_type=None, permissions=None,
                         ))
                         seen.add(dir_name)
                 else:
@@ -89,12 +85,9 @@ class OSSAdapter(BaseAdapter):
                     items.append(FileInfo(
                         name=name,
                         path=f"{path.rstrip('/')}/{name}" if path != "/" else f"/{name}",
-                        is_dir=False,
-                        size=obj.size,
-                        modified_at=mtime,
-                        created_at=None,
-                        mime_type=mimetypes.guess_type(name)[0],
-                        permissions=None,
+                        is_dir=False, size=obj.size,
+                        modified_at=mtime, created_at=None,
+                        mime_type=mimetypes.guess_type(name)[0], permissions=None,
                     ))
             return items
 
@@ -128,30 +121,91 @@ class OSSAdapter(BaseAdapter):
         bucket = self._get_bucket()
         key = self._to_key(path)
 
-        def _download():
-            result = bucket.get_object(key)
-            return result.read()
+        def _get_result():
+            return bucket.get_object(key)
 
-        data = await asyncio.to_thread(_download)
-        for i in range(0, len(data), 64 * 1024):
-            yield data[i:i + 64 * 1024]
+        result = await asyncio.to_thread(_get_result)
+
+        def _read_chunk():
+            return result.read(CHUNK_SIZE)
+
+        while True:
+            chunk = await asyncio.to_thread(_read_chunk)
+            if not chunk:
+                break
+            yield chunk
 
     async def upload(self, path: str, data: AsyncIterator[bytes], size: int | None = None) -> None:
         bucket = self._get_bucket()
         key = self._to_key(path)
         content_type = mimetypes.guess_type(path)[0]
 
-        buf = b""
-        async for chunk in data:
-            buf += chunk
+        # 小文件 (< 8MB): put_object
+        # 大文件: multipart (append_object 或 multipart upload)
+        SMALL_THRESHOLD = 8 * 1024 * 1024
 
-        def _upload():
+        if size is not None and size <= SMALL_THRESHOLD:
+            buf = b""
+            async for chunk in data:
+                buf += chunk
+
+            def _upload():
+                headers = {}
+                if content_type:
+                    headers["Content-Type"] = content_type
+                bucket.put_object(key, buf, headers=headers if headers else None)
+
+            await asyncio.to_thread(_upload)
+        else:
+            # Multipart upload — 流式分片上传
+            part_size = 10 * 1024 * 1024  # 10MB per part
             headers = {}
             if content_type:
                 headers["Content-Type"] = content_type
-            bucket.put_object(key, buf, headers=headers if headers else None)
 
-        await asyncio.to_thread(_upload)
+            def _init():
+                return bucket.init_multipart_upload(key, headers=headers if headers else None)
+
+            result = await asyncio.to_thread(_init)
+            upload_id = result.upload_id
+            parts = []
+            part_num = 0
+            buf = b""
+
+            try:
+                async for chunk in data:
+                    buf += chunk
+                    while len(buf) >= part_size:
+                        part_data = buf[:part_size]
+                        buf = buf[part_size:]
+                        part_num += 1
+
+                        def _upload_part(data_to_upload=part_data, num=part_num):
+                            return bucket.upload_part(key, upload_id, num, data_to_upload)
+
+                        part_result = await asyncio.to_thread(_upload_part)
+                        parts.append(oss2.models.PartInfo(part_num, part_result.etag))
+
+                # 上传剩余数据
+                if buf:
+                    part_num += 1
+
+                    def _upload_last():
+                        return bucket.upload_part(key, upload_id, part_num, buf)
+
+                    part_result = await asyncio.to_thread(_upload_last)
+                    parts.append(oss2.models.PartInfo(part_num, part_result.etag))
+
+                def _complete():
+                    bucket.complete_multipart_upload(key, upload_id, parts)
+
+                await asyncio.to_thread(_complete)
+            except Exception:
+                def _abort():
+                    bucket.abort_multipart_upload(key, upload_id)
+
+                await asyncio.to_thread(_abort)
+                raise
 
     async def delete(self, path: str) -> None:
         bucket = self._get_bucket()

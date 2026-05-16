@@ -6,3 +6,5 @@ from app.models.transfer_task import TransferTask  # noqa: F401
 from app.models.share_link import ShareLink  # noqa: F401
 from app.models.ip_blacklist import IPBlacklist  # noqa: F401
 from app.models.access_log import AccessLog  # noqa: F401
+from app.models.notification import Notification  # noqa: F401
+from app.models.mount_permission import MountPermission  # noqa: F401
