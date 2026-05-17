@@ -12,11 +12,11 @@ export function useWebSocket(url, options = {}) {
   let reconnectTimer = null
 
   function connect() {
-    // 从 localStorage 获取 token 附加到 URL
+    // 通过 Sec-WebSocket-Protocol 传递 token (避免 token 出现在 URL/日志中)
     const token = localStorage.getItem('access_token')
-    const wsUrl = token ? `${url}?token=${encodeURIComponent(token)}` : url
-
-    ws = new WebSocket(wsUrl)
+    ws = token
+      ? new WebSocket(url, ['auth', token])
+      : new WebSocket(url)
 
     ws.onopen = () => {
       connected.value = true

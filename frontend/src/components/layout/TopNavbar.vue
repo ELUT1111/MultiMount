@@ -8,12 +8,21 @@
     <div class="navbar-center">
       <el-input
         v-model="searchQuery"
-        placeholder="搜索文件、挂载源..."
+        placeholder="搜索文件名..."
         :prefix-icon="Search"
         clearable
         @keyup.enter="handleSearch"
-        style="max-width: 480px"
+        style="max-width: 420px"
       />
+      <el-tooltip :content="search.useRegex ? '正则匹配: 开' : '正则匹配: 关'" placement="bottom">
+        <el-button
+          :type="search.useRegex ? 'primary' : ''"
+          :icon="Filter"
+          size="default"
+          @click="search.useRegex = !search.useRegex"
+          style="flex-shrink: 0"
+        >.*</el-button>
+      </el-tooltip>
     </div>
     <div class="navbar-right">
       <!-- 深色/浅色主题切换 -->
@@ -55,6 +64,14 @@
                 <div class="notif-item-title">{{ n.title }}</div>
                 <div class="notif-item-content">{{ n.content }}</div>
                 <div class="notif-item-time">{{ formatNotifTime(n.created_at) }}</div>
+                <!-- 可执行通知的操作按钮 -->
+                <div v-if="isActionable(n)" class="notif-actions" @click.stop>
+                  <template v-if="n.type === 'access_request'">
+                    <el-button size="small" type="success" text :loading="actingIds.has(n.id)" @click="handleApprove(n)">同意</el-button>
+                    <el-button size="small" type="danger" text :loading="actingIds.has(n.id)" @click="handleDeny(n)">拒绝</el-button>
+                    <el-button size="small" type="primary" text @click="goToPermDialog(n)">查看</el-button>
+                  </template>
+                </div>
               </div>
             </div>
           </div>
@@ -68,7 +85,7 @@
         </div>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item :icon="Setting">个人设置</el-dropdown-item>
+            <el-dropdown-item :icon="Setting" @click="router.push('/profile')">个人设置</el-dropdown-item>
             <el-dropdown-item :icon="SwitchButton" divided @click="handleLogout">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -80,15 +97,20 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { FolderOpened, Search, Lock, Bell, Setting, SwitchButton, Sunny, Moon, Warning, CircleCheck, InfoFilled } from '@element-plus/icons-vue'
+import { FolderOpened, Search, Lock, Bell, Setting, SwitchButton, Sunny, Moon, Warning, CircleCheck, InfoFilled, Filter } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
+import { useSearchStore } from '@/stores/search'
+import { handleNotificationAction } from '@/api/notifications'
 
 const router = useRouter()
 const auth = useAuthStore()
 const notif = useNotificationsStore()
+const search = useSearchStore()
 const searchQuery = ref('')
 const isDark = ref(document.documentElement.classList.contains('dark'))
+const actingIds = ref(new Set())
 
 function toggleTheme() {
   isDark.value = !isDark.value
@@ -96,7 +118,10 @@ function toggleTheme() {
 }
 
 function handleSearch() {
-  // 搜索功能暂未实现
+  const q = searchQuery.value.trim()
+  if (!q) return
+  search.query = q
+  router.push({ path: '/files', query: { q } })
 }
 
 function handleLogout() {
@@ -110,7 +135,7 @@ function onNotifShow() {
 
 function notifIcon(type) {
   if (type === 'mount_deleted' || type === 'account_disabled') return Warning
-  if (type === 'permission_changed') return InfoFilled
+  if (type === 'permission_changed' || type === 'access_request') return InfoFilled
   return CircleCheck
 }
 
@@ -127,6 +152,44 @@ function formatNotifTime(iso) {
 
 function handleNotifClick(n) {
   if (!n.is_read) notif.markNotificationRead(n.id)
+}
+
+function isActionable(n) {
+  return n.type === 'access_request' && n.metadata?.requester_id
+}
+
+async function handleApprove(n) {
+  actingIds.value.add(n.id)
+  try {
+    await handleNotificationAction(n.id, 'approve')
+    ElMessage.success('已同意权限申请')
+    n.is_read = true
+    if (notif.unreadCount > 0) notif.unreadCount--
+  } catch {
+    ElMessage.error('操作失败')
+  } finally {
+    actingIds.value.delete(n.id)
+  }
+}
+
+async function handleDeny(n) {
+  actingIds.value.add(n.id)
+  try {
+    await handleNotificationAction(n.id, 'deny')
+    ElMessage.success('已拒绝权限申请')
+    n.is_read = true
+    if (notif.unreadCount > 0) notif.unreadCount--
+  } catch {
+    ElMessage.error('操作失败')
+  } finally {
+    actingIds.value.delete(n.id)
+  }
+}
+
+function goToPermDialog(n) {
+  const mountId = n.related_id
+  if (!n.is_read) notif.markNotificationRead(n.id)
+  router.push({ path: '/mounts', query: { open_perms: mountId } })
 }
 </script>
 
@@ -204,12 +267,13 @@ function handleNotifClick(n) {
 .notif-item.unread { background: rgba(64,158,255,0.04); }
 .notif-item .el-icon { margin-top: 2px; flex-shrink: 0; }
 .notif-icon-mount_deleted, .notif-icon-account_disabled { color: var(--danger-color); }
-.notif-icon-permission_changed { color: var(--warning-color); }
+.notif-icon-permission_changed, .notif-icon-access_request { color: var(--warning-color); }
 .notif-icon-mount_status { color: var(--info-color); }
 .notif-body { flex: 1; min-width: 0; }
 .notif-item-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
 .notif-item-content { font-size: 12px; color: var(--text-regular); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notif-item-time { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+.notif-actions { display: flex; gap: 4px; margin-top: 6px; }
 
 /* 响应式 */
 @media (max-width: 768px) {

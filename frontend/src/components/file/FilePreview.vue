@@ -2,7 +2,7 @@
   文件预览组件 — 支持图片和文本文件的内联预览, 在对话框中展示。
 -->
 <template>
-  <el-dialog v-model="visible" :title="fileName" width="70%" destroy-on-close>
+  <el-dialog v-model="visible" :title="fileName" width="70%" destroy-on-close @close="cleanup">
     <div class="preview-container">
       <!-- 图片预览 -->
       <img v-if="isImage" :src="previewUrl" class="preview-image" @error="loadFailed = true" />
@@ -32,6 +32,7 @@ defineEmits(['download'])
 const visible = defineModel({ type: Boolean, default: false })
 const textContent = ref('')
 const loadFailed = ref(false)
+const previewUrl = ref('')
 
 const fileName = computed(() => props.file?.name || '预览')
 const isImage = computed(() => {
@@ -42,24 +43,42 @@ const isText = computed(() => {
   const mime = props.file?.mime_type || ''
   return mime.startsWith('text/') || ['application/json', 'application/xml'].includes(mime)
 })
-const previewUrl = computed(() => {
-  if (!props.file || !props.mountId) return ''
-  const token = localStorage.getItem('access_token')
-  return `/api/v1/files/${props.mountId}/download?path=${encodeURIComponent(props.file.path)}&token=${token}`
-})
 
-// 文本文件: 打开时加载内容
+function cleanup() {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = ''
+  }
+  textContent.value = ''
+  loadFailed.value = false
+}
+
+function getDownloadUrl() {
+  return `/api/v1/files/${props.mountId}/download?path=${encodeURIComponent(props.file.path)}`
+}
+
+function getAuthHeaders() {
+  const token = localStorage.getItem('access_token')
+  return { Authorization: `Bearer ${token}` }
+}
+
+// 图片: 通过 Authorization header 获取 blob, 创建 object URL (避免 token 泄露到 URL)
+// 文本: 通过 fetch 获取内容
 watch(visible, async (val) => {
-  if (val && isText.value && props.file) {
-    try {
-      const token = localStorage.getItem('access_token')
-      const resp = await fetch(`/api/v1/files/${props.mountId}/download?path=${encodeURIComponent(props.file.path)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+  if (!val || !props.file) return
+  cleanup()
+  try {
+    const resp = await fetch(getDownloadUrl(), { headers: getAuthHeaders() })
+    if (!resp.ok) throw new Error('fetch failed')
+    if (isImage.value) {
+      const blob = await resp.blob()
+      previewUrl.value = URL.createObjectURL(blob)
+    } else if (isText.value) {
       textContent.value = await resp.text()
-    } catch {
-      textContent.value = '加载失败'
     }
+  } catch {
+    if (isImage.value) loadFailed.value = true
+    else if (isText.value) textContent.value = '加载失败'
   }
 })
 </script>

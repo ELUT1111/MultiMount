@@ -6,6 +6,10 @@ export const listAllUsers = () => request.get('/users/all')
 
 export const getMe = () => request.get('/users/me')
 
+export const updateMe = (data) => request.patch('/users/me', data)
+
+export const checkUnique = (field, value) => request.get('/users/check-unique', { params: { field, value } })
+
 export const createUser = (data) => request.post('/users', data)
 
 export const updateUser = (id, data) => request.put(`/users/${id}`, data)

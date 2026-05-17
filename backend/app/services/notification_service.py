@@ -46,6 +46,7 @@ async def create_notification(
     title: str,
     content: str,
     related_id: int | None = None,
+    metadata: dict | None = None,
 ) -> Notification:
     """创建通知并推送到前端"""
     notif = Notification(
@@ -54,6 +55,7 @@ async def create_notification(
         title=title,
         content=content,
         related_id=related_id,
+        metadata_=metadata,
     )
     db.add(notif)
     await db.flush()
@@ -69,6 +71,7 @@ async def create_notification(
             "content": notif.content,
             "is_read": notif.is_read,
             "related_id": notif.related_id,
+            "metadata": notif.metadata_,
             "created_at": notif.created_at.isoformat(),
         },
     })

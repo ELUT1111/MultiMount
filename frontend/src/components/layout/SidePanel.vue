@@ -28,9 +28,9 @@
     </div>
 
     <div class="sidebar-bottom">
-      <div class="webdav-toggle">
+      <div class="webdav-toggle" v-if="auth.isAdmin">
         <span>WebDAV 服务</span>
-        <el-switch v-model="webdavRunning" size="small" />
+        <el-switch v-model="webdavRunning" size="small" :loading="webdavLoading" @change="toggleWebDAV" />
       </div>
       <el-button type="primary" size="small" plain style="width:100%" @click="$router.push('/mounts')">
         <el-icon><Plus /></el-icon>快速连接
@@ -42,16 +42,19 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { FolderOpened, Connection, User, Upload, Setting, Plus, Monitor, Cloudy, DataLine } from '@element-plus/icons-vue'
 import { useMountsStore } from '@/stores/mounts'
 import { useFilesStore } from '@/stores/files'
 import { useAuthStore } from '@/stores/auth'
+import { getWebDAVStatus, startWebDAV, stopWebDAV } from '@/api/webdav'
 
 const route = useRoute()
 const mounts = useMountsStore()
 const files = useFilesStore()
 const auth = useAuthStore()
 const webdavRunning = ref(false)
+const webdavLoading = ref(false)
 const currentPath = computed(() => route.path)
 
 // 所有菜单项 (adminOnly 标记的仅管理员可见)
@@ -84,7 +87,36 @@ const groupedMounts = computed(() => {
   return typeOrder.filter((t) => map[t]).map((t) => ({ type: t, label: typeLabels[t] || t, items: map[t] }))
 })
 
-onMounted(() => { mounts.fetchMounts() })
+async function toggleWebDAV(running) {
+  webdavLoading.value = true
+  try {
+    if (running) {
+      await startWebDAV()
+      ElMessage.success('WebDAV 服务已启动')
+    } else {
+      await stopWebDAV()
+      ElMessage.success('WebDAV 服务已停止')
+    }
+  } catch {
+    webdavRunning.value = !running // 回滚状态
+    ElMessage.error('WebDAV 操作失败')
+  } finally {
+    webdavLoading.value = false
+  }
+}
+
+onMounted(async () => {
+  mounts.fetchMounts()
+  // 获取 WebDAV 服务状态 (仅管理员)
+  if (auth.isAdmin) {
+    try {
+      const status = await getWebDAVStatus()
+      webdavRunning.value = status.running
+    } catch {
+      // 静默失败
+    }
+  }
+})
 </script>
 
 <style scoped>

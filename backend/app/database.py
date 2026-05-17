@@ -24,8 +24,26 @@ class Base(DeclarativeBase):
 
 async def init_db():
     """创建所有表 (开发用, 生产应使用 Alembic)"""
+    import sqlalchemy as sa
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # 增量迁移: 为 notifications 表添加 metadata 列 (如不存在)
+        try:
+            await conn.execute(sa.text("ALTER TABLE notifications ADD COLUMN metadata JSON"))
+        except Exception:
+            pass  # 列已存在则忽略
+        # 增量迁移: 为 users 表添加 account 列 (如不存在)
+        try:
+            await conn.execute(sa.text("ALTER TABLE users ADD COLUMN account VARCHAR(64)"))
+            # 回填已有用户的 account (默认使用 username)
+            await conn.execute(sa.text("UPDATE users SET account = username WHERE account IS NULL"))
+            # 创建唯一索引
+            try:
+                await conn.execute(sa.text("CREATE UNIQUE INDEX ix_users_account ON users(account)"))
+            except Exception:
+                pass
+        except Exception:
+            pass  # 列已存在则忽略
 
 
 async def get_db() -> AsyncSession:

@@ -37,15 +37,18 @@ async def get_user(db: AsyncSession, user_id: int) -> User:
 
 
 async def create_user(
-    db: AsyncSession, username: str, email: str, password: str, role_id: int | None = None
+    db: AsyncSession, account: str, username: str, email: str, password: str, role_id: int | None = None
 ) -> User:
     existing = await db.execute(
-        select(User).where((User.username == username) | (User.email == email))
+        select(User).where(
+            (User.account == account) | (User.username == username) | (User.email == email)
+        )
     )
     if existing.scalar_one_or_none():
-        raise ConflictException("用户名或邮箱已被注册")
+        raise ConflictException("账号、用户名或邮箱已被注册")
 
     user = User(
+        account=account,
         username=username,
         email=email,
         hashed_password=hash_password(password),
@@ -71,6 +74,49 @@ async def delete_user(db: AsyncSession, user_id: int) -> None:
     user = await get_user(db, user_id)
     await db.delete(user)
     await db.flush()
+
+
+async def update_me(db: AsyncSession, user_id: int, username: str | None, email: str | None,
+                    password: str | None, current_password: str | None) -> User:
+    """普通用户修改自己的资料"""
+    from app.core.security import verify_password
+    user = await get_user(db, user_id)
+
+    # 修改密码需要验证当前密码
+    if password is not None:
+        if not current_password or not verify_password(current_password, user.hashed_password):
+            raise BadRequestException("当前密码不正确")
+        user.hashed_password = hash_password(password)
+
+    # 修改用户名 (检查唯一性)
+    if username is not None and username != user.username:
+        existing = await db.execute(select(User).where(User.username == username))
+        if existing.scalar_one_or_none():
+            raise ConflictException("用户名已被使用")
+        user.username = username
+
+    # 修改邮箱 (检查唯一性)
+    if email is not None and email != user.email:
+        existing = await db.execute(select(User).where(User.email == email))
+        if existing.scalar_one_or_none():
+            raise ConflictException("邮箱已被使用")
+        user.email = email
+
+    await db.flush()
+    await db.refresh(user)
+    return user
+
+
+async def check_unique(db: AsyncSession, field: str, value: str, exclude_id: int | None = None) -> bool:
+    """检查字段值是否唯一, 返回 True 表示可用"""
+    if field not in ("account", "username", "email"):
+        return False
+    col = getattr(User, field)
+    query = select(User).where(col == value)
+    if exclude_id is not None:
+        query = query.where(User.id != exclude_id)
+    result = await db.execute(query)
+    return result.scalar_one_or_none() is None
 
 
 # ── 角色 CRUD ─────────────────────────────────────────────

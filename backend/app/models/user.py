@@ -9,6 +9,7 @@ from app.models.base import BaseModel
 class User(BaseModel):
     __tablename__ = "users"
 
+    account: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     email: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
     hashed_password: Mapped[str] = mapped_column(String(256), nullable=False)

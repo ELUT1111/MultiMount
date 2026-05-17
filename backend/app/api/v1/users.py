@@ -6,7 +6,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_admin
 from app.models.user import User
 from app.schemas.common import PageResult
-from app.schemas.user import RoleCreate, RoleOut, RoleUpdate, UserCreate, UserOut, UserUpdate
+from app.schemas.user import RoleCreate, RoleOut, RoleUpdate, UpdateMeRequest, UserCreate, UserOut, UserUpdate
 from app.services import user_service
 
 router = APIRouter()
@@ -32,10 +32,10 @@ async def list_users(
 
 @router.get("/all")
 async def list_all_users(
-    _user=Depends(get_current_user),
+    _admin=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """返回所有活跃用户的 id 和 username (供权限对话框使用)"""
+    """返回所有活跃用户的 id 和 username (仅管理员)"""
     result = await db.execute(
         select(User.id, User.username, User.is_active).where(User.is_active == True)
     )
@@ -47,13 +47,39 @@ async def get_me(current_user=Depends(get_current_user)):
     return current_user
 
 
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    body: UpdateMeRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await user_service.update_me(
+        db, current_user.id,
+        username=body.username,
+        email=body.email,
+        password=body.password,
+        current_password=body.current_password,
+    )
+
+
+@router.get("/check-unique")
+async def check_unique(
+    field: str = Query(..., description="字段: account, username, email"),
+    value: str = Query(..., description="要检查的值"),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    available = await user_service.check_unique(db, field, value, exclude_id=current_user.id)
+    return {"available": available}
+
+
 @router.post("", response_model=UserOut, status_code=201)
 async def create_user(
     body: UserCreate,
     _admin=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await user_service.create_user(db, body.username, body.email, body.password, body.role_id)
+    return await user_service.create_user(db, body.account, body.username, body.email, body.password, body.role_id)
 
 
 @router.put("/{user_id}", response_model=UserOut)

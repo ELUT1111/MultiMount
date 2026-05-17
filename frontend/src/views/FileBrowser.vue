@@ -4,8 +4,8 @@
 -->
 <template>
   <div class="file-browser" @dragover.prevent="onDragOver" @dragleave="onDragLeave" @drop.prevent="onDrop">
-    <!-- 顶部工具栏 -->
-    <div class="file-toolbar">
+    <!-- 顶部工具栏 (搜索模式下隐藏) -->
+    <div v-if="!search.searched" class="file-toolbar">
       <el-breadcrumb separator="/">
         <el-breadcrumb-item v-for="(crumb, i) in breadcrumbs" :key="i">
           <a v-if="i < breadcrumbs.length - 1" @click="navigateTo(crumb.path)">{{ crumb.name }}</a>
@@ -34,6 +34,27 @@
       </div>
     </div>
 
+    <!-- 搜索模式工具栏 -->
+    <div v-if="search.searched" class="search-toolbar">
+      <div class="search-filters">
+        <el-input v-model="search.query" placeholder="搜索关键词" size="default" style="width: 200px" @keyup.enter="doSearch" clearable />
+        <el-tooltip :content="search.useRegex ? '正则匹配: 开' : '正则匹配: 关'">
+          <el-button :type="search.useRegex ? 'primary' : ''" size="default" @click="search.useRegex = !search.useRegex">.*</el-button>
+        </el-tooltip>
+        <el-select v-model="search.filterByMount" placeholder="挂载源" clearable size="default" style="width: 140px">
+          <el-option v-for="m in search.availableMounts" :key="m" :label="m" :value="m" />
+        </el-select>
+        <el-select v-model="search.filterByOwner" placeholder="创建者" clearable size="default" style="width: 120px">
+          <el-option v-for="o in search.availableOwners" :key="o" :label="o" :value="o" />
+        </el-select>
+        <el-button type="primary" @click="doSearch" :loading="search.loading">搜索</el-button>
+      </div>
+      <div class="search-meta">
+        <span>找到 {{ search.filteredResults.length }} 个结果</span>
+        <el-button text type="primary" size="small" @click="exitSearch">返回浏览</el-button>
+      </div>
+    </div>
+
     <!-- 拖拽上传遮罩层 -->
     <div v-if="dragging" class="drag-overlay">
       <el-icon :size="48" color="var(--primary-color)"><UploadFilled /></el-icon>
@@ -42,13 +63,24 @@
 
     <!-- 主内容区 -->
     <div class="file-content-wrapper">
-      <div v-loading="files.loading" class="file-content">
-        <el-empty v-if="!files.loading && files.sortedFiles.length === 0" description="此目录为空" />
+      <div v-loading="files.loading || search.loading" class="file-content">
+        <el-empty v-if="!search.searched && !files.loading && files.sortedFiles.length === 0" description="此目录为空" />
+        <el-empty v-if="search.searched && !search.loading && search.filteredResults.length === 0" description="未找到匹配的文件" />
+        <div v-if="!search.searched && files.totalPages > 1" class="file-pagination">
+          <el-pagination
+            v-model:current-page="files.page"
+            :page-size="files.pageSize"
+            :total="files.sortedFiles.length"
+            layout="total, prev, pager, next"
+            small
+            @current-change="(p) => files.setPage(p)"
+          />
+        </div>
 
         <!-- 列表视图 -->
         <el-table
-          v-if="files.viewMode === 'list' && files.sortedFiles.length"
-          :data="files.sortedFiles"
+          v-if="files.viewMode === 'list' && (search.searched ? search.filteredResults.length : files.sortedFiles.length)"
+          :data="search.searched ? search.filteredResults : files.pagedFiles"
           style="width: 100%"
           highlight-current-row
           @row-dblclick="handleDblClick"
@@ -72,7 +104,7 @@
             <template #default="{ row }">{{ formatTime(row.modified_at) }}</template>
           </el-table-column>
           <el-table-column label="挂载源" width="120">
-            <template #default>{{ currentMountName }}</template>
+            <template #default="{ row }">{{ search.searched ? row.mount_name : currentMountName }}</template>
           </el-table-column>
           <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
@@ -86,8 +118,8 @@
         </el-table>
 
         <!-- 网格视图 -->
-        <div v-if="files.viewMode === 'grid' && files.sortedFiles.length" class="file-grid">
-          <div v-for="file in files.sortedFiles" :key="file.path" class="file-card"
+        <div v-if="files.viewMode === 'grid' && (search.searched ? search.filteredResults.length : files.sortedFiles.length)" class="file-grid">
+          <div v-for="file in (search.searched ? search.filteredResults : files.pagedFiles)" :key="file.path" class="file-card"
                :class="{ selected: files.selectedFile?.path === file.path || selectedFiles.some(f => f.path === file.path) }"
                @dblclick="handleDblClick(file)"
                @click="batchMode ? toggleFileSelection(file) : files.selectFile(file)"
@@ -132,7 +164,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { List, Grid, FolderAdd, UploadFilled, Refresh, Folder, Document, Finished } from '@element-plus/icons-vue'
@@ -141,6 +173,7 @@ import { formatSize, formatTime } from '@/utils/format'
 import { useFilesStore } from '@/stores/files'
 import { useUpload } from '@/composables/useUpload'
 import { useMountsStore } from '@/stores/mounts'
+import { useSearchStore } from '@/stores/search'
 import DetailPanel from '@/components/layout/DetailPanel.vue'
 import FileContextMenu from '@/components/file/FileContextMenu.vue'
 import FilePreview from '@/components/file/FilePreview.vue'
@@ -149,6 +182,7 @@ const route = useRoute()
 const files = useFilesStore()
 const mounts = useMountsStore()
 const upload = useUpload()
+const search = useSearchStore()
 
 const contextMenuRef = ref()
 const dragging = ref(false)
@@ -199,13 +233,18 @@ function toggleFileSelection(file) {
   else selectedFiles.value.push(file)
 }
 
-// 批量删除
+// 批量删除 (并行执行)
 async function handleBatchDelete() {
   await ElMessageBox.confirm(`确定删除选中的 ${selectedFiles.value.length} 个项目?`, '确认删除', { type: 'warning' })
-  for (const f of selectedFiles.value) {
-    await deleteFile(files.currentMountId, f.path)
+  const results = await Promise.allSettled(
+    selectedFiles.value.map((f) => deleteFile(files.currentMountId, f.path))
+  )
+  const failed = results.filter((r) => r.status === 'rejected').length
+  if (failed === 0) {
+    ElMessage.success(`已删除 ${selectedFiles.value.length} 个项目`)
+  } else {
+    ElMessage.warning(`删除完成，${failed} 个项目失败`)
   }
-  ElMessage.success(`已删除 ${selectedFiles.value.length} 个项目`)
   selectedFiles.value = []
   batchMode.value = false
   files.refresh()
@@ -222,10 +261,15 @@ async function handleMove(file) {
   files.refresh()
 }
 
-// 双击: 进入目录
+// 双击: 进入目录 (搜索模式下导航到对应挂载)
 function handleDblClick(file) {
   if (file.is_dir) {
-    files.fetchFiles(files.currentMountId, file.path)
+    if (search.searched) {
+      exitSearch()
+      files.fetchFiles(file.mount_id, file.path)
+    } else {
+      files.fetchFiles(files.currentMountId, file.path)
+    }
   } else {
     handlePreview(file)
   }
@@ -360,10 +404,29 @@ async function handleShare(file) {
   }
 }
 
-// 初始化: 默认加载第一个挂载点
+// ── 搜索 ──────────────────────────────────────────────
+function doSearch() {
+  if (!search.query.trim()) return
+  search.search()
+}
+
+function exitSearch() {
+  search.clearSearch()
+  router.replace({ path: '/files' })
+}
+
+// 路由 query.q 变化时自动触发搜索
+watch(() => route.query.q, (q) => {
+  if (q) {
+    search.query = q
+    nextTick(() => search.search())
+  }
+}, { immediate: true })
+
+// 初始化: 默认加载第一个挂载点 (非搜索模式)
 onMounted(async () => {
   await mounts.fetchMounts()
-  if (mounts.mounts.length > 0) {
+  if (!route.query.q && mounts.mounts.length > 0) {
     files.fetchFiles(mounts.mounts[0].id, '/')
   }
 })
@@ -408,6 +471,11 @@ onMounted(async () => {
 }
 .drag-overlay p { font-size: 16px; color: var(--primary-color); font-weight: 600; }
 
+/* 分页 */
+.file-pagination {
+  display: flex; justify-content: center; padding: 12px 0 4px;
+}
+
 /* 上传进度条 */
 .upload-bar {
   position: fixed; bottom: 20px; right: 20px; left: 280px; z-index: 200;
@@ -415,4 +483,12 @@ onMounted(async () => {
   background: var(--card-bg); border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
   font-size: 13px;
 }
+
+/* 搜索工具栏 */
+.search-toolbar {
+  padding: 12px 16px; background: var(--card-bg); border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06); display: flex; flex-direction: column; gap: 8px;
+}
+.search-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.search-meta { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-secondary); }
 </style>

@@ -1,7 +1,7 @@
 """
 传输任务路由 — 任务 CRUD、暂停/恢复/取消、WebSocket 进度推送。
 """
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -11,6 +11,14 @@ from app.services import transfer_service
 from app.core.security import decode_token
 
 router = APIRouter()
+
+
+async def _get_owned_task(task_id: int, user, db: AsyncSession):
+    """获取任务并校验所有权"""
+    task = await transfer_service.get_task(db, task_id)
+    if task.user_id != user.id:
+        raise HTTPException(status_code=403, detail="无权操作此任务")
+    return task
 
 
 @router.get("", response_model=list[TransferTaskOut])
@@ -30,7 +38,7 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
 ):
     """获取单个传输任务详情"""
-    return await transfer_service.get_task(db, task_id)
+    return await _get_owned_task(task_id, _user, db)
 
 
 @router.post("", response_model=TransferTaskOut, status_code=201)
@@ -54,6 +62,7 @@ async def pause_task(
     db: AsyncSession = Depends(get_db),
 ):
     """暂停传输任务"""
+    await _get_owned_task(task_id, _user, db)
     return await transfer_service.pause_task(db, task_id)
 
 
@@ -64,6 +73,7 @@ async def resume_task(
     db: AsyncSession = Depends(get_db),
 ):
     """恢复传输任务 (断点续传)"""
+    await _get_owned_task(task_id, _user, db)
     return await transfer_service.resume_task(db, task_id)
 
 
@@ -74,6 +84,7 @@ async def cancel_task(
     db: AsyncSession = Depends(get_db),
 ):
     """取消/删除传输任务"""
+    await _get_owned_task(task_id, _user, db)
     await transfer_service.cancel_task(db, task_id)
     return {"message": "已取消"}
 
@@ -85,7 +96,7 @@ async def retry_task(
     db: AsyncSession = Depends(get_db),
 ):
     """重试失败的传输任务"""
-    task = await transfer_service.get_task(db, task_id)
+    task = await _get_owned_task(task_id, _user, db)
     if task.status != "failed":
         from app.core.exceptions import BadRequestException
         raise BadRequestException("只能重试失败的任务")
@@ -102,18 +113,30 @@ async def retry_task(
 async def transfer_ws(websocket: WebSocket):
     """
     WebSocket 端点 — 客户端连接后自动推送传输进度。
-    连接时需在 query 参数中传递 token: ws://host/api/v1/transfers/ws?token=xxx
+    通过 Sec-WebSocket-Protocol 头传递 token (避免 URL 泄露)。
     """
-    await websocket.accept()
+    # 从 Sec-WebSocket-Protocol 头提取 token
+    token = ""
+    protocols = websocket.headers.get("sec-websocket-protocol", "")
+    if protocols:
+        parts = [p.strip() for p in protocols.split(",")]
+        if len(parts) >= 2 and parts[0] == "auth":
+            token = parts[1]
 
-    # 从 query 参数中提取 token 并验证
-    token = websocket.query_params.get("token", "")
+    # 回退: 也支持 query param (兼容旧客户端)
+    if not token:
+        token = websocket.query_params.get("token", "")
+    if not token:
+        await websocket.close(code=4001, reason="缺少 token")
+        return
+
     payload = decode_token(token)
     if not payload or payload.get("type") != "access":
         await websocket.close(code=4001, reason="无效的令牌")
         return
 
     user_id = int(payload["sub"])
+    await websocket.accept(subprotocol="auth")
     transfer_service.register_ws(user_id, websocket)
 
     try:

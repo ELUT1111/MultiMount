@@ -10,6 +10,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import require_admin
+from app.core.mount_permissions import check_basic_permission
 from app.database import get_db
 from app.models.access_log import AccessLog
 from app.models.ip_blacklist import IPBlacklist
@@ -106,7 +107,7 @@ async def clear_logs(
 @router.get("/browse")
 async def browse_local_folders(
     path: str = Query("", description="要浏览的目录路径, 空则返回磁盘列表"),
-    _admin=Depends(require_admin),
+    _user=Depends(check_basic_permission("can_manage_mounts")),
 ):
     """浏览服务器本地文件系统目录 (仅返回文件夹)"""
     if not path:

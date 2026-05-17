@@ -12,8 +12,8 @@
       <!-- 登录表单 -->
       <transition name="fade" mode="out-in">
         <el-form v-if="mode === 'login'" key="login" ref="loginFormRef" :model="loginForm" :rules="loginRules" label-width="0" size="large" aria-label="登录表单">
-          <el-form-item prop="username">
-            <el-input v-model="loginForm.username" placeholder="用户名" :prefix-icon="User" :disabled="loading" />
+          <el-form-item prop="login_id">
+            <el-input v-model="loginForm.login_id" placeholder="账号、用户名或邮箱" :prefix-icon="User" :disabled="loading" />
           </el-form-item>
           <el-form-item prop="password">
             <el-input v-model="loginForm.password" type="password" placeholder="密码" :prefix-icon="Lock" show-password :disabled="loading" @keyup.enter="handleLogin" />
@@ -29,6 +29,9 @@
 
         <!-- 注册表单 -->
         <el-form v-else key="register" ref="registerFormRef" :model="registerForm" :rules="registerRules" label-width="0" size="large" aria-label="注册表单">
+          <el-form-item prop="account">
+            <el-input v-model="registerForm.account" placeholder="账号 (2-64字符, 不可修改)" :prefix-icon="User" :disabled="loading" />
+          </el-form-item>
           <el-form-item prop="username">
             <el-input v-model="registerForm.username" placeholder="用户名 (2-64字符)" :prefix-icon="User" :disabled="loading" />
           </el-form-item>
@@ -70,9 +73,9 @@ const loading = ref(false)
 const mode = ref('login')
 
 // 登录
-const loginForm = reactive({ username: '', password: '' })
+const loginForm = reactive({ login_id: '', password: '' })
 const loginRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  login_id: [{ required: true, message: '请输入账号、用户名或邮箱', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
@@ -81,7 +84,7 @@ async function handleLogin() {
   if (!valid) return
   loading.value = true
   try {
-    await auth.login(loginForm.username, loginForm.password)
+    await auth.login(loginForm.login_id, loginForm.password)
     ElMessage.success('登录成功')
     router.push('/')
   } catch (e) {
@@ -92,7 +95,7 @@ async function handleLogin() {
 }
 
 // 注册
-const registerForm = reactive({ username: '', email: '', password: '', confirmPassword: '' })
+const registerForm = reactive({ account: '', username: '', email: '', password: '', confirmPassword: '' })
 
 const validateConfirmPassword = (rule, value, callback) => {
   if (value !== registerForm.password) {
@@ -103,6 +106,10 @@ const validateConfirmPassword = (rule, value, callback) => {
 }
 
 const registerRules = {
+  account: [
+    { required: true, message: '请输入账号', trigger: 'blur' },
+    { min: 2, max: 64, message: '账号长度为 2-64 个字符', trigger: 'blur' },
+  ],
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
     { min: 2, max: 64, message: '用户名长度为 2-64 个字符', trigger: 'blur' },
@@ -127,13 +134,14 @@ async function handleRegister() {
   loading.value = true
   try {
     await register({
+      account: registerForm.account,
       username: registerForm.username,
       email: registerForm.email,
       password: registerForm.password,
     })
     ElMessage.success('注册成功, 请登录')
     mode.value = 'login'
-    loginForm.username = registerForm.username
+    loginForm.login_id = registerForm.account
     loginForm.password = ''
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '注册失败')

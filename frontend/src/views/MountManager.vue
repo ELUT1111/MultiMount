@@ -13,7 +13,7 @@
           <el-option label="在线" value="online" />
           <el-option label="离线" value="offline" />
         </el-select>
-        <el-button @click="mounts.fetchMounts()" :icon="Refresh">刷新</el-button>
+        <el-button @click="mounts.fetchMounts(true)" :icon="Refresh">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="showAddDialog = true">添加挂载</el-button>
       </div>
     </div>
@@ -203,18 +203,20 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Plus, Refresh, FolderOpened, Connection, Monitor, Cloudy } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useMountsStore } from '@/stores/mounts'
 import { useAuthStore } from '@/stores/auth'
 import { formatSize, formatTime } from '@/utils/format'
 import FolderPicker from '@/components/common/FolderPicker.vue'
-import { getMountPermissions, grantPermission, revokePermission, requestAccess } from '@/api/mount_permissions'
+import { getMountPermissions, grantPermission, revokePermission, requestAccess, getMountRequesters } from '@/api/mount_permissions'
 import { listAllUsers } from '@/api/users'
 
 const mounts = useMountsStore()
 const auth = useAuthStore()
+const route = useRoute()
 const showAddDialog = ref(false)
 const addStep = ref(0)
 const saving = ref(false)
@@ -397,9 +399,14 @@ async function openPermDialog(mount) {
   grantForm.level = 'read'
 
   try {
+    // 管理员可看到所有用户，普通挂载所有者仅看到曾申请过权限的用户
+    const usersPromise = auth.isAdmin
+      ? listAllUsers()
+      : getMountRequesters(mount.id)
+
     const [perms, users] = await Promise.all([
       getMountPermissions(mount.id),
-      listAllUsers(),
+      usersPromise,
     ])
     permList.value = perms
     allUsers.value = users
@@ -472,7 +479,17 @@ async function handleRequestAccess() {
   }
 }
 
-onMounted(() => mounts.fetchMounts())
+onMounted(async () => {
+  await mounts.fetchMounts()
+  // 深链接: 从通知跳转时自动打开权限管理对话框
+  const openPermsId = Number(route.query.open_perms)
+  if (openPermsId) {
+    const target = mounts.mounts.find(m => m.id === openPermsId)
+    if (target && canManagePerms(target)) {
+      openPermDialog(target)
+    }
+  }
+})
 </script>
 
 <style scoped>

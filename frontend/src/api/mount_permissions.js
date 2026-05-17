@@ -7,3 +7,5 @@ export const grantPermission = (mountId, data) => request.post(`/mounts/${mountI
 export const revokePermission = (mountId, userId) => request.delete(`/mounts/${mountId}/permissions/${userId}`)
 
 export const requestAccess = (mountId, data) => request.post(`/mounts/${mountId}/request-access`, data)
+
+export const getMountRequesters = (mountId) => request.get(`/mounts/${mountId}/requesters`)

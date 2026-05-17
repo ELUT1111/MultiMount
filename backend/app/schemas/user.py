@@ -16,6 +16,7 @@ class RoleOut(BaseModel):
 
 class UserOut(BaseModel):
     id: int
+    account: str
     username: str
     email: str
     role_id: int | None
@@ -28,6 +29,7 @@ class UserOut(BaseModel):
 
 
 class UserCreate(BaseModel):
+    account: str = Field(..., min_length=2, max_length=64)
     username: str = Field(..., min_length=2, max_length=64)
     email: EmailStr
     password: str = Field(..., min_length=6, max_length=128)
@@ -38,6 +40,14 @@ class UserUpdate(BaseModel):
     email: EmailStr | None = None
     role_id: int | None = None
     is_active: bool | None = None
+    username: str | None = None
+
+
+class UpdateMeRequest(BaseModel):
+    username: str | None = Field(None, min_length=2, max_length=64)
+    email: EmailStr | None = None
+    password: str | None = Field(None, min_length=6, max_length=128)
+    current_password: str | None = None
 
 
 class RoleCreate(BaseModel):

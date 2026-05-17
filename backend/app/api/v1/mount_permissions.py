@@ -1,12 +1,14 @@
 """
-挂载权限管理 API — 授予/撤销/查看权限 + 权限申请。
+挂载权限管理 API — 授予/撤销/查看权限 + 权限申请 + 申请人查询。
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.notification import Notification
 from app.models.user import User
 from app.services import mount_permission_service
 from app.services.mount_service import get_mount
@@ -102,3 +104,37 @@ async def request_access(
         db, mount_id, user.id, body.level, user.username,
     )
     return {"message": "权限申请已发送"}
+
+
+@router.get("/{mount_id}/requesters")
+async def list_requesters(
+    mount_id: int,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取曾向该挂载申请过权限的用户列表 (供权限管理对话框使用)"""
+    await _require_mount_owner_or_admin(mount_id, user, db)
+
+    # 查询 access_request 通知，从 metadata 中提取 requester_id
+    result = await db.execute(
+        select(Notification.metadata_)
+        .where(Notification.type == "access_request")
+        .where(Notification.related_id == mount_id)
+    )
+    requester_ids = set()
+    for row in result.all():
+        meta = row[0] or {}
+        rid = meta.get("requester_id")
+        if rid:
+            requester_ids.add(rid)
+
+    if not requester_ids:
+        return []
+
+    # 查询这些用户的 id 和 username
+    users_result = await db.execute(
+        select(User.id, User.username)
+        .where(User.id.in_(requester_ids))
+        .where(User.is_active == True)
+    )
+    return [{"id": row[0], "username": row[1]} for row in users_result.all()]

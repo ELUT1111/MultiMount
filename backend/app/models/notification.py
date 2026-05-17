@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -13,6 +13,7 @@ class Notification(BaseModel):
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="通知内容")
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否已读")
     related_id: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="关联 ID (挂载/角色)")
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True, comment="通知元数据 (可执行通知的操作参数)")
 
     def __repr__(self):
         return f"<Notification {self.type} → user={self.user_id}>"

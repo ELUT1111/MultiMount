@@ -5,6 +5,7 @@ export const useMountsStore = defineStore('mounts', {
   state: () => ({
     mounts: [],
     loading: false,
+    loaded: false, // 是否已加载过数据
   }),
 
   getters: {
@@ -13,10 +14,13 @@ export const useMountsStore = defineStore('mounts', {
   },
 
   actions: {
-    async fetchMounts() {
+    /** 加载挂载列表, force=true 强制刷新 */
+    async fetchMounts(force = false) {
+      if (this.loaded && !force) return
       this.loading = true
       try {
         this.mounts = await listMountsApi()
+        this.loaded = true
       } finally {
         this.loading = false
       }

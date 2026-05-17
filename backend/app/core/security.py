@@ -57,7 +57,11 @@ def _get_fernet() -> Fernet:
     if _fernet is None:
         key = settings.ENCRYPTION_KEY
         if not key:
-            key = Fernet.generate_key().decode()
+            raise RuntimeError(
+                "ENCRYPTION_KEY 未设置！请生成密钥并写入 .env 文件:\n"
+                "  python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"\n"
+                "然后设置: ENCRYPTION_KEY=<生成的密钥>"
+            )
         _fernet = Fernet(key.encode() if isinstance(key, str) else key)
     return _fernet
 

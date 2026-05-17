@@ -164,4 +164,5 @@ async def request_access(db: AsyncSession, mount_id: int, user_id: int,
         "权限申请",
         f"用户 \"{username}\" 申请 {requested_level} 权限访问您的挂载 \"{mount_name}\"。",
         related_id=mount_id,
+        metadata={"requester_id": user_id, "requested_level": requested_level, "requester_name": username},
     )

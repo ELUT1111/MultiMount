@@ -82,7 +82,9 @@ async def create_mount(
         db, body.name, body.type, body.config, body.advanced_config,
         user_id=user.id,
     )
-    return _mount_to_out(mount)
+    out = _mount_to_out(mount)
+    out.my_level = "readwrite"
+    return out
 
 
 @router.get("/{mount_id}", response_model=MountOut)

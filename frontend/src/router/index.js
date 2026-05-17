@@ -31,6 +31,11 @@ const routes = [
         meta: { requiresAdmin: true },
       },
       {
+        path: 'profile',
+        name: 'PersonalSettings',
+        component: () => import('@/views/PersonalSettings.vue'),
+      },
+      {
         path: 'transfers',
         name: 'TransferTasks',
         component: () => import('@/views/TransferTasks.vue'),

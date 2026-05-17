@@ -1,11 +1,19 @@
 import { defineStore } from 'pinia'
 import { login as loginApi } from '@/api/auth'
 
+function safeParseUser() {
+  try {
+    return JSON.parse(localStorage.getItem('user') || 'null')
+  } catch {
+    return null
+  }
+}
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     accessToken: localStorage.getItem('access_token') || '',
     refreshToken: localStorage.getItem('refresh_token') || '',
-    user: JSON.parse(localStorage.getItem('user') || 'null'),
+    user: safeParseUser(),
   }),
 
   getters: {
@@ -15,8 +23,8 @@ export const useAuthStore = defineStore('auth', {
   },
 
   actions: {
-    async login(username, password) {
-      const data = await loginApi({ username, password })
+    async login(loginId, password) {
+      const data = await loginApi({ login_id: loginId, password })
       this.accessToken = data.access_token
       this.refreshToken = data.refresh_token
       localStorage.setItem('access_token', data.access_token)
@@ -28,8 +36,8 @@ export const useAuthStore = defineStore('auth', {
         this.user = user
         localStorage.setItem('user', JSON.stringify(user))
       } catch {
-        this.user = { username }
-        localStorage.setItem('user', JSON.stringify({ username }))
+        this.user = { username: loginId }
+        localStorage.setItem('user', JSON.stringify({ username: loginId }))
       }
     },
 
