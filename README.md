@@ -32,7 +32,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 后端启动后会自动:
-- 创建 SQLite 数据库
+- 创建 SQLite 数据库 (`data/multimount.db`)
 - 初始化默认角色 (admin / user / readonly)
 - 创建默认管理员账号
 
@@ -48,17 +48,42 @@ npm install
 npm run dev
 ```
 
-访问 http://localhost:5173
+访问 http://localhost:5173 ，前端已配置代理将 `/api` 请求转发到后端 `http://127.0.0.1:8000`。
 
 ### 3. 默认管理员账号
 
-| 用户名 | 密码 |
-|--------|------|
-| `admin` | `admin123` |
+| 账号 | 用户名 | 密码 |
+|------|--------|------|
+| `admin` | `admin` | `admin123` |
 
-首次登录后建议修改密码。
+首次登录后建议在「个人设置」中修改密码。
 
-## 生产构建
+## 环境配置
+
+复制 `backend/.env.example` 为 `backend/.env`，按需修改:
+
+```ini
+# 应用
+APP_HOST=0.0.0.0
+APP_PORT=8000
+DEBUG=true
+
+# 数据库 (默认 SQLite，文件存储在 data/ 目录)
+DATABASE_URL=sqlite+aiosqlite:///./data/multimount.db
+
+# JWT 密钥 (生产环境务必更换!)
+JWT_SECRET_KEY=CHANGE_ME_TO_A_RANDOM_SECRET_KEY
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# CORS 允许的前端地址
+CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]
+
+# Fernet 加密密钥 (用于加密挂载配置中的密码等敏感字段，生产环境务必设置固定值)
+ENCRYPTION_KEY=
+```
+
+## 生产部署
 
 ```bash
 # 构建前端
@@ -69,10 +94,17 @@ cp -r dist/* ../backend/static/
 
 # 以生产模式启动后端 (自动托管前端)
 cd ../backend
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+DEBUG=false python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ## 功能说明
+
+### 用户系统
+
+- **账号体系**: 每个用户拥有唯一账号 (`account`)、用户名、邮箱，均用于登录
+- **多方式登录**: 支持使用账号、用户名或邮箱登录
+- **角色权限**: 基于角色的访问控制 (admin / user / readonly)
+- **个人设置**: 修改用户名、邮箱、密码（自动唯一性校验）
 
 ### 挂载管理
 
@@ -87,58 +119,89 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 | OSS | 阿里云对象存储 |
 | S3 | Amazon S3 兼容存储 |
 
+- 挂载点级别的权限管理 (不可见 / 只读 / 读写)
+- 普通用户可创建和管理自己的挂载点 (需 `can_manage_mounts` 权限)
+
 ### 文件浏览器
 
 - 列表/网格双视图切换
 - 文件上传 (支持拖拽)、下载、删除、移动、复制
 - 创建文件夹
 - 批量选择操作
+- 文件预览 (图片、文本、视频等)
 - 生成分享链接
+
+### 文件搜索
+
+- 跨挂载点文件名搜索
+- 支持正则表达式匹配
+- 按挂载源、创建者过滤搜索结果
 
 ### WebDAV 服务
 
 将所有挂载点以 WebDAV 协议对外暴露，支持:
 - Windows 资源管理器 / macOS Finder 原生挂载
 - Basic Auth 认证 (复用平台用户账号)
-- 独立端口运行，可配置 SSL
+- 通过侧边栏开关一键启停
 
-### 用户与权限
+### 通知系统
 
-- 基于角色的访问控制 (RBAC)
-- 每个角色可独立配置对各挂载点的访问权限 (不可见 / 只读 / 读写)
-- QoS 速率限制 (下载/上传速率、并发连接数)
+- 挂载状态变更通知
+- 权限变更通知
+- 权限申请审批 (同意/拒绝)
 
-### 系统设置
+### 传输任务
 
+- 传输队列管理
+- 传输进度和状态跟踪
+
+### 系统管理 (管理员)
+
+- 用户与角色管理
+- 请求监控
+- 系统设置 (HTTPS 证书、日志查看等)
 - 深色/浅色主题切换
-- HTTPS 证书管理
-- 日志查看 (系统日志 / 访问日志 / 传输日志)
 
 ## 项目结构
 
 ```
-pan/
+MountHub/
 ├── backend/
 │   ├── app/
-│   │   ├── adapters/          # 存储协议适配器
+│   │   ├── adapters/          # 存储协议适配器 (local/ftp/sftp/webdav/oss/s3)
 │   │   ├── api/v1/            # REST API 路由
-│   │   ├── core/              # 安全、中间件、权限
-│   │   ├── models/            # 数据库模型
+│   │   ├── core/              # 安全、中间件、权限、日志
+│   │   ├── models/            # SQLAlchemy 数据库模型
 │   │   ├── schemas/           # Pydantic 请求/响应模型
 │   │   ├── services/          # 业务逻辑
-│   │   └── webdav_server/     # WebDAV 服务端
-│   ├── alembic/               # 数据库迁移
+│   │   ├── utils/             # 工具函数
+│   │   └── webdav_server/     # WebDAV 服务端 (wsgidav)
+│   ├── data/                  # SQLite 数据库 (git 忽略)
+│   ├── certs/                 # SSL 证书 (git 忽略)
 │   ├── pyproject.toml
 │   └── .env.example
 ├── frontend/
 │   ├── src/
 │   │   ├── api/               # 后端 API 调用
-│   │   ├── components/        # 通用组件
-│   │   ├── composables/       # 组合式函数
+│   │   ├── components/        # 通用组件 (布局、文件操作等)
+│   │   ├── composables/       # 组合式函数 (WebSocket 等)
+│   │   ├── router/            # Vue Router 路由配置
 │   │   ├── stores/            # Pinia 状态管理
-│   │   ├── views/             # 页面视图
-│   │   └── styles/            # 全局样式
+│   │   ├── utils/             # 工具函数 (axios 封装等)
+│   │   └── views/             # 页面视图
 │   ├── package.json
 │   └── vite.config.js
 └── README.md
 ```
+
+## 页面导航
+
+| 路径 | 页面 | 权限 |
+|------|------|------|
+| `/files` | 文件浏览器 | 所有用户 |
+| `/mounts` | 挂载管理 | 所有用户 |
+| `/transfers` | 传输任务 | 所有用户 |
+| `/profile` | 个人设置 | 所有用户 |
+| `/users` | 用户与权限 | 管理员 |
+| `/settings` | 系统设置 | 管理员 |
+| `/monitor` | 请求监控 | 管理员 |
