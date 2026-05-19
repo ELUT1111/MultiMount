@@ -13,6 +13,7 @@ export const useSearchStore = defineStore('search', {
     results: [],
     loading: false,
     searched: false,
+    error: '',
   }),
 
   getters: {
@@ -44,11 +45,13 @@ export const useSearchStore = defineStore('search', {
       if (!this.query.trim()) return
       this.loading = true
       this.searched = true
+      this.error = ''
       try {
         const params = { q: this.query, regex: this.useRegex, limit: 200 }
         this.results = await searchFiles(params)
-      } catch {
+      } catch (e) {
         this.results = []
+        this.error = e.response?.data?.detail || '搜索失败'
       } finally {
         this.loading = false
       }
@@ -62,6 +65,7 @@ export const useSearchStore = defineStore('search', {
       this.results = []
       this.searched = false
       this.loading = false
+      this.error = ''
     },
   },
 })

@@ -21,10 +21,11 @@
           size="default"
           @click="search.useRegex = !search.useRegex"
           style="flex-shrink: 0"
-        >.*</el-button>
+        >正则</el-button>
       </el-tooltip>
     </div>
     <div class="navbar-right">
+      <el-button class="mobile-search-btn" :icon="Search" circle text @click="showMobileSearch = true" />
       <!-- 深色/浅色主题切换 -->
       <el-tooltip :content="isDark ? '切换到浅色模式' : '切换到深色模式'" placement="bottom">
         <el-icon :size="18" class="theme-toggle" @click="toggleTheme">
@@ -91,6 +92,20 @@
         </template>
       </el-dropdown>
     </div>
+
+    <el-dialog v-model="showMobileSearch" title="搜索文件" width="92%" class="mobile-search-dialog">
+      <div class="mobile-search-box">
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索文件名..."
+          :prefix-icon="Search"
+          clearable
+          @keyup.enter="handleSearch"
+        />
+        <el-button :type="search.useRegex ? 'primary' : ''" @click="search.useRegex = !search.useRegex">正则</el-button>
+        <el-button type="primary" @click="handleSearch">搜索</el-button>
+      </div>
+    </el-dialog>
   </header>
 </template>
 
@@ -110,17 +125,20 @@ const notif = useNotificationsStore()
 const search = useSearchStore()
 const searchQuery = ref('')
 const isDark = ref(document.documentElement.classList.contains('dark'))
+const showMobileSearch = ref(false)
 const actingIds = ref(new Set())
 
 function toggleTheme() {
   isDark.value = !isDark.value
   document.documentElement.classList.toggle('dark', isDark.value)
+  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
 }
 
 function handleSearch() {
   const q = searchQuery.value.trim()
   if (!q) return
   search.query = q
+  showMobileSearch.value = false
   router.push({ path: '/files', query: { q } })
 }
 
@@ -224,6 +242,7 @@ function goToPermDialog(n) {
   flex: 1;
   display: flex;
   justify-content: center;
+  gap: 8px;
 }
 .navbar-right {
   display: flex;
@@ -252,6 +271,8 @@ function goToPermDialog(n) {
   transition: color 0.2s;
 }
 .theme-toggle:hover { color: var(--primary-color); }
+.mobile-search-btn { display: none; }
+.mobile-search-box { display: flex; gap: 8px; }
 
 /* 通知面板 */
 .notif-panel { max-height: 400px; display: flex; flex-direction: column; }
@@ -279,7 +300,14 @@ function goToPermDialog(n) {
 @media (max-width: 768px) {
   .navbar-center { display: none; }
   .logo-subtitle { display: none; }
+  .logo-text { font-size: 16px; }
   .navbar-left { min-width: auto; }
   .navbar-right { min-width: auto; gap: 12px; }
+  .username { display: none; }
+  .lock-icon { display: none; }
+  .mobile-search-btn { display: inline-flex; }
+  .top-navbar { padding: 0 12px; }
+  .notification-badge :deep(.el-badge__content) { transform: translateY(-3px) translateX(8px); }
+  .mobile-search-box { flex-direction: column; }
 }
 </style>

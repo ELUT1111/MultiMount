@@ -31,8 +31,8 @@
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- 访问日志 -->
       <el-tab-pane label="访问日志" name="logs">
-        <div class="filter-bar">
-          <el-input v-model="logFilter.ip" placeholder="按 IP 筛选" clearable size="small" style="width: 200px" @clear="fetchLogs" @keyup.enter="fetchLogs" />
+        <div class="filter-bar responsive-filters">
+          <el-input v-model="logFilter.ip" placeholder="按 IP 筛选" clearable size="small" @clear="fetchLogs" @keyup.enter="fetchLogs" />
           <el-button size="small" @click="fetchLogs" :loading="logsLoading">查询</el-button>
         </div>
         <el-table :data="logs" v-loading="logsLoading" stripe size="small" style="width: 100%">
@@ -51,7 +51,7 @@
           <el-table-column prop="response_time_ms" label="耗时" width="90">
             <template #default="{ row }">{{ row.response_time_ms.toFixed(1) }}ms</template>
           </el-table-column>
-          <el-table-column prop="created_at" label="时间" width="180">
+          <el-table-column prop="created_at" label="时间" width="180" class-name="hide-sm" label-class-name="hide-sm">
             <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="80">
@@ -71,11 +71,60 @@
         </div>
       </el-tab-pane>
 
+      <!-- 操作审计 -->
+      <el-tab-pane label="操作审计" name="operations">
+        <div class="filter-bar responsive-filters">
+          <el-input v-model="opFilter.username" placeholder="按用户筛选" clearable size="small" @clear="fetchOperationLogs" @keyup.enter="fetchOperationLogs" />
+          <el-input v-model="opFilter.action" placeholder="按操作筛选" clearable size="small" @clear="fetchOperationLogs" @keyup.enter="fetchOperationLogs" />
+          <el-input-number v-model="opFilter.mount_id" placeholder="挂载 ID" :min="1" size="small" />
+          <el-select v-model="opFilter.status" placeholder="状态" clearable size="small">
+            <el-option label="成功" value="success" />
+            <el-option label="失败" value="failed" />
+          </el-select>
+          <el-button size="small" @click="fetchOperationLogs" :loading="opLoading">查询</el-button>
+        </div>
+        <el-table :data="operationLogs" v-loading="opLoading" stripe size="small" style="width: 100%">
+          <el-table-column prop="created_at" label="时间" width="180" class-name="hide-sm" label-class-name="hide-sm">
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column prop="username" label="用户" width="120">
+            <template #default="{ row }">{{ row.username || '匿名' }}</template>
+          </el-table-column>
+          <el-table-column prop="action" label="操作" width="150">
+            <template #default="{ row }">
+              <el-tag size="small" :type="operationTagType(row.action)">{{ operationLabel(row.action) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="mount_id" label="挂载" width="80" class-name="hide-sm" label-class-name="hide-sm">
+            <template #default="{ row }">{{ row.mount_id || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="target_path" label="目标路径" min-width="180" show-overflow-tooltip class-name="hide-sm" label-class-name="hide-sm" />
+          <el-table-column prop="ip_address" label="IP" width="140" class-name="hide-sm" label-class-name="hide-sm">
+            <template #default="{ row }">{{ row.ip_address || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="status" label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.status === 'success' ? 'success' : 'danger'">{{ row.status === 'success' ? '成功' : '失败' }}</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="pagination-bar">
+          <el-pagination
+            v-model:current-page="opFilter.page"
+            :page-size="opFilter.page_size"
+            :total="opTotal"
+            layout="total, prev, pager, next"
+            @current-change="fetchOperationLogs"
+          />
+        </div>
+      </el-tab-pane>
+
       <!-- IP 黑名单 -->
       <el-tab-pane label="IP 黑名单" name="blacklist">
-        <div class="filter-bar">
-          <el-input v-model="newIp" placeholder="输入 IP 地址" size="small" style="width: 200px" />
-          <el-input v-model="newReason" placeholder="拉黑原因 (可选)" size="small" style="width: 240px" />
+        <div class="filter-bar responsive-filters">
+          <el-input v-model="newIp" placeholder="输入 IP 地址" size="small" />
+          <el-input v-model="newReason" placeholder="拉黑原因 (可选)" size="small" />
           <el-button type="danger" size="small" @click="handleAdd" :loading="addLoading">添加拉黑</el-button>
           <el-button size="small" @click="fetchBlacklist" :loading="blLoading">刷新</el-button>
         </div>
@@ -89,7 +138,7 @@
               <el-tag :type="row.is_active ? 'danger' : 'info'" size="small">{{ row.is_active ? '生效中' : '已解封' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="created_at" label="添加时间" width="180">
+          <el-table-column prop="created_at" label="添加时间" width="180" class-name="hide-sm" label-class-name="hide-sm">
             <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="100">
@@ -130,7 +179,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getAccessLogs, getAccessStats, getIPBlacklist, addIPBlacklist, removeIPBlacklist } from '@/api/system'
+import { getAccessLogs, getAccessStats, getOperationLogs, getIPBlacklist, addIPBlacklist, removeIPBlacklist } from '@/api/system'
 
 // ── 状态 ────────────────────────────────────────────────────
 const activeTab = ref('logs')
@@ -142,6 +191,12 @@ const logs = ref([])
 const logsLoading = ref(false)
 const logTotal = ref(0)
 const logFilter = reactive({ ip: '', page: 1, page_size: 50 })
+
+// 操作审计
+const operationLogs = ref([])
+const opLoading = ref(false)
+const opTotal = ref(0)
+const opFilter = reactive({ username: '', action: '', mount_id: null, status: '', page: 1, page_size: 50 })
 
 // 黑名单
 const blacklist = ref([])
@@ -172,6 +227,24 @@ async function fetchLogs() {
   } finally { logsLoading.value = false }
 }
 
+async function fetchOperationLogs() {
+  opLoading.value = true
+  try {
+    const data = await getOperationLogs({
+      page: opFilter.page,
+      page_size: opFilter.page_size,
+      username: opFilter.username,
+      action: opFilter.action,
+      mount_id: opFilter.mount_id || undefined,
+      status: opFilter.status,
+    })
+    operationLogs.value = data.items
+    opTotal.value = data.total
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '获取操作审计失败')
+  } finally { opLoading.value = false }
+}
+
 async function fetchBlacklist() {
   blLoading.value = true
   try {
@@ -183,6 +256,7 @@ async function fetchBlacklist() {
 
 function onTabChange(tab) {
   if (tab === 'logs') fetchLogs()
+  else if (tab === 'operations') fetchOperationLogs()
   else if (tab === 'blacklist') fetchBlacklist()
   else if (tab === 'rankings') fetchStats()
 }
@@ -248,6 +322,32 @@ function statusTagType(s) {
   return 'danger'
 }
 
+function operationLabel(action) {
+  return {
+    file_download: '文件下载',
+    file_upload: '文件上传',
+    file_mkdir: '新建目录',
+    file_move: '移动/重命名',
+    file_copy: '复制',
+    file_delete: '删除',
+    share_create: '创建分享',
+    share_access: '访问分享',
+    share_download: '分享下载',
+    share_delete: '删除分享',
+    share_deactivate: '停用分享',
+    permission_grant: '授予权限',
+    permission_revoke: '撤销权限',
+    permission_request: '申请权限',
+  }[action] || action
+}
+
+function operationTagType(action) {
+  if (action.includes('delete') || action.includes('revoke')) return 'danger'
+  if (action.includes('permission')) return 'warning'
+  if (action.includes('share')) return 'success'
+  return 'info'
+}
+
 // ── 初始化 ───────────────────────────────────────────────────
 onMounted(() => {
   fetchStats()
@@ -267,7 +367,7 @@ onMounted(() => {
 .stat-value { font-size: 28px; font-weight: 700; color: var(--primary-color); }
 .stat-label { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
 
-.filter-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.filter-bar { margin-bottom: 12px; }
 .pagination-bar { display: flex; justify-content: flex-end; margin-top: 12px; }
 
 .ranking-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }

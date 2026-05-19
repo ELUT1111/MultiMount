@@ -3,7 +3,7 @@
   支持自定义标题、消息、类型和确认按钮文字。
 -->
 <template>
-  <el-dialog v-model="visible" :title="title" width="400px" :close-on-click-modal="false">
+  <el-dialog v-model="visible" :title="title" class="responsive-dialog confirm-dialog" :close-on-click-modal="false">
     <div class="confirm-body">
       <el-icon :size="24" :color="iconColor" style="margin-right: 12px">
         <component :is="icon" />

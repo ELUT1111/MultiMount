@@ -2,7 +2,7 @@
   文件预览组件 — 支持图片和文本文件的内联预览, 在对话框中展示。
 -->
 <template>
-  <el-dialog v-model="visible" :title="fileName" width="70%" destroy-on-close @close="cleanup">
+  <el-dialog v-model="visible" :title="fileName" class="responsive-dialog preview-dialog" destroy-on-close @close="cleanup">
     <div class="preview-container">
       <!-- 图片预览 -->
       <img v-if="isImage" :src="previewUrl" class="preview-image" @error="loadFailed = true" />

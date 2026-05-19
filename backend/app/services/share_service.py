@@ -2,18 +2,39 @@
 分享链接服务 — 创建、查询、验证、删除分享链接。
 """
 import secrets
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.models.share_link import ShareLink
+
+settings = get_settings()
 
 
 def _generate_token() -> str:
     """生成 URL 安全的随机令牌"""
     return secrets.token_urlsafe(24)
+
+
+def _verify_access_code(stored_code: str, provided_code: str) -> bool:
+    """验证提取码。兼容历史明文提取码，新提取码使用哈希。"""
+    if stored_code.startswith("hmac_sha256$"):
+        return hmac.compare_digest(stored_code, _hash_access_code(provided_code))
+    return stored_code == provided_code
+
+
+def _hash_access_code(access_code: str) -> str:
+    digest = hmac.new(
+        settings.JWT_SECRET_KEY.encode(),
+        access_code.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"hmac_sha256${digest}"
 
 
 async def create_share_link(
@@ -50,7 +71,7 @@ async def create_share_link(
         created_by=created_by,
         expires_at=expires_at,
         max_views=max_views,
-        access_code=access_code if access_code else None,
+        access_code=_hash_access_code(access_code) if access_code else None,
     )
     db.add(link)
     await db.flush()
@@ -85,7 +106,7 @@ async def validate_and_access(db: AsyncSession, token: str, access_code: str = "
         raise BadRequestException("分享链接访问次数已达上限")
 
     # 检查提取码
-    if link.access_code and link.access_code != access_code:
+    if link.access_code and not _verify_access_code(link.access_code, access_code):
         raise BadRequestException("提取码错误")
 
     # 记录访问

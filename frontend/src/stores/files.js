@@ -11,7 +11,8 @@ export const useFilesStore = defineStore('files', {
     files: [],              // 当前目录文件列表
     selectedFile: null,     // 右侧详情面板选中的文件
     viewMode: 'list',       // list | grid
-    sortBy: 'name',         // name | size | modified
+    sortBy: 'name',         // 兼容旧入口: name | size | modified
+    sortRules: [],
     loading: false,
     page: 1,                // 当前页码
     pageSize: 100,          // 每页数量
@@ -20,14 +21,7 @@ export const useFilesStore = defineStore('files', {
   getters: {
     /** 按当前排序方式排列文件, 目录始终在前 */
     sortedFiles(state) {
-      const arr = [...state.files]
-      arr.sort((a, b) => {
-        if (a.is_dir !== b.is_dir) return b.is_dir ? 1 : -1
-        if (state.sortBy === 'size') return a.size - b.size
-        if (state.sortBy === 'modified') return (a.modified_at || '').localeCompare(b.modified_at || '')
-        return a.name.localeCompare(b.name, 'zh-CN')
-      })
-      return arr
+      return sortFileEntries(state.files, state.sortRules)
     },
 
     /** 分页后的文件列表 */
@@ -79,6 +73,79 @@ export const useFilesStore = defineStore('files', {
 
     setSortBy(field) {
       this.sortBy = field
+      const normalized = field === 'modified' ? 'modified_at' : field
+      this.sortRules = [{ field: normalized, direction: 'asc' }]
+      this.page = 1
+    },
+
+    toggleSortField(field) {
+      const existing = this.sortRules.find((rule) => rule.field === field)
+      if (existing) {
+        existing.direction = existing.direction === 'asc' ? 'desc' : 'asc'
+      } else {
+        this.sortRules.push({ field, direction: 'asc' })
+      }
+      this.page = 1
+    },
+
+    removeSortField(field) {
+      this.sortRules = this.sortRules.filter((rule) => rule.field !== field)
+      this.page = 1
+    },
+
+    getSortRule(field) {
+      const index = this.sortRules.findIndex((rule) => rule.field === field)
+      if (index === -1) return null
+      return { ...this.sortRules[index], order: index + 1 }
+    },
+
+    sortEntries(entries, fallback = {}) {
+      return sortFileEntries(entries, this.sortRules, fallback)
     },
   },
 })
+
+function sortFileEntries(entries, sortRules = [], fallback = {}) {
+  const rules = sortRules.length ? sortRules : [{ field: 'name', direction: 'asc' }]
+  return [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return b.is_dir ? 1 : -1
+
+    for (const rule of rules) {
+      const result = compareField(a, b, rule.field, fallback)
+      if (result !== 0) return rule.direction === 'desc' ? -result : result
+    }
+
+    return compareString(a.name, b.name)
+  })
+}
+
+function compareField(a, b, field, fallback) {
+  if (field === 'size') return compareNumber(a.size, b.size)
+  if (field === 'modified_at' || field === 'created_at') {
+    return compareTime(a[field], b[field])
+  }
+  return compareString(getTextValue(a, field, fallback), getTextValue(b, field, fallback))
+}
+
+function getTextValue(row, field, fallback) {
+  if (field === 'mount_name') return row.mount_name || fallback.mount_name || ''
+  if (field === 'creator') return row.mount_owner || row.creator || fallback.creator || ''
+  return row[field] || ''
+}
+
+function compareString(a, b) {
+  return String(a || '').localeCompare(String(b || ''), 'zh-CN', {
+    numeric: true,
+    sensitivity: 'base',
+  })
+}
+
+function compareNumber(a, b) {
+  return (Number(a) || 0) - (Number(b) || 0)
+}
+
+function compareTime(a, b) {
+  const left = a ? new Date(a).getTime() : 0
+  const right = b ? new Date(b).getTime() : 0
+  return left - right
+}

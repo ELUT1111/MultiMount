@@ -15,15 +15,6 @@
       </div>
     </div>
 
-    <!-- 全局速率限制 -->
-    <div class="rate-limit-bar">
-      <span class="rate-label">全局速率限制:</span>
-      <span class="rate-label">下载</span>
-      <el-slider v-model="rateLimitDownload" :min="0" :max="10240" :step="64" :format-tooltip="(v) => v ? v + ' KB/s' : '不限'" style="width: 180px" @change="onRateLimitChange('download', $event)" />
-      <span class="rate-label">上传</span>
-      <el-slider v-model="rateLimitUpload" :min="0" :max="10240" :step="64" :format-tooltip="(v) => v ? v + ' KB/s' : '不限'" style="width: 180px" @change="onRateLimitChange('upload', $event)" />
-    </div>
-
     <!-- 状态标签页 -->
     <el-tabs v-model="transfers.activeTab">
       <el-tab-pane name="running">
@@ -81,7 +72,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { Refresh, Upload, Download, Connection } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTransfersStore } from '@/stores/transfers'
@@ -90,10 +81,6 @@ import { formatSpeed } from '@/utils/format'
 import TransferCard from '@/components/transfer/TransferCard.vue'
 
 const transfers = useTransfersStore()
-
-// 全局速率限制 (KB/s, 0=不限)
-const rateLimitDownload = ref(0)
-const rateLimitUpload = ref(0)
 
 // WebSocket 实时进度
 const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -105,16 +92,6 @@ const { data: wsData, connected: wsConnected, connect: wsConnect } = useWebSocke
 const runningCount = computed(() => transfers.tasks.filter((t) => ['pending', 'running', 'paused'].includes(t.status)).length)
 const completedCount = computed(() => transfers.tasks.filter((t) => t.status === 'completed').length)
 const failedCount = computed(() => transfers.tasks.filter((t) => t.status === 'failed').length)
-
-// 速率限制变更 (debounced)
-let rateLimitTimer = null
-function onRateLimitChange(direction, value) {
-  clearTimeout(rateLimitTimer)
-  rateLimitTimer = setTimeout(() => {
-    ElMessage.info(`全局${direction === 'download' ? '下载' : '上传'}速率限制已${value ? '设为 ' + value + ' KB/s' : '取消'}`)
-    // TODO: 后端速率限制 API 尚未实现, 此处仅展示 UI 交互
-  }, 500)
-}
 
 // WebSocket 收到进度更新 → 更新 store
 watch(wsData, (val) => {
@@ -171,12 +148,6 @@ onMounted(() => {
 .page-header { display: flex; justify-content: space-between; align-items: center; }
 .page-header h2 { font-size: 20px; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.rate-limit-bar {
-  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
-  background: var(--card-bg); border-radius: 8px; font-size: 13px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-.rate-label { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
 .task-list { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
 .transfer-footer {
   display: flex; gap: 24px; align-items: center; padding: 12px 16px;

@@ -1,7 +1,7 @@
 """
 挂载权限管理 API — 授予/撤销/查看权限 + 权限申请 + 申请人查询。
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.notification import Notification
 from app.models.user import User
-from app.services import mount_permission_service
+from app.services import mount_permission_service, operation_log_service
 from app.services.mount_service import get_mount
 
 router = APIRouter()
@@ -57,6 +57,7 @@ async def list_permissions(
 
 @router.post("/{mount_id}/permissions", status_code=201)
 async def grant_permission(
+    request: Request,
     mount_id: int,
     body: GrantRequest,
     user=Depends(get_current_user),
@@ -77,11 +78,23 @@ async def grant_permission(
         f"您已被授予挂载 \"{mount.name}\" 的 {body.level} 权限。",
         related_id=mount_id,
     )
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="permission_grant",
+        resource_type="mount",
+        user=user,
+        mount_id=mount_id,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"target_user_id": body.user_id, "level": body.level},
+    )
     return {"message": "权限已授予", "user_id": body.user_id, "level": body.level}
 
 
 @router.delete("/{mount_id}/permissions/{target_user_id}", status_code=204)
 async def revoke_permission(
+    request: Request,
     mount_id: int,
     target_user_id: int,
     user=Depends(get_current_user),
@@ -90,10 +103,22 @@ async def revoke_permission(
     """撤销用户挂载权限"""
     await _require_mount_owner_or_admin(mount_id, user, db)
     await mount_permission_service.revoke_permission(db, mount_id, target_user_id)
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="permission_revoke",
+        resource_type="mount",
+        user=user,
+        mount_id=mount_id,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"target_user_id": target_user_id},
+    )
 
 
 @router.post("/{mount_id}/request-access")
 async def request_access(
+    request: Request,
     mount_id: int,
     body: RequestAccessRequest,
     user=Depends(get_current_user),
@@ -102,6 +127,17 @@ async def request_access(
     """申请挂载访问权限"""
     await mount_permission_service.request_access(
         db, mount_id, user.id, body.level, user.username,
+    )
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="permission_request",
+        resource_type="mount",
+        user=user,
+        mount_id=mount_id,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"requested_level": body.level},
     )
     return {"message": "权限申请已发送"}
 

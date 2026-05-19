@@ -3,13 +3,17 @@
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
-from app.services import share_service
+from app.core.policy import enforce_file_policy
+from app.services import file_service, operation_log_service, share_service
 
 router = APIRouter()
 
@@ -48,11 +52,14 @@ class ShareAccessRequest(BaseModel):
 
 @router.post("", response_model=ShareLinkOut, status_code=201)
 async def create_link(
+    request: Request,
     body: ShareLinkCreate,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """创建文件分享链接"""
+    await enforce_file_policy(db, current_user, body.mount_id, "share")
+    await file_service.get_info(db, body.mount_id, body.file_path)
     link = await share_service.create_share_link(
         db,
         mount_id=body.mount_id,
@@ -61,6 +68,18 @@ async def create_link(
         expires_hours=body.expires_hours,
         max_views=body.max_views,
         access_code=body.access_code,
+    )
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="share_create",
+        resource_type="share",
+        user=current_user,
+        mount_id=body.mount_id,
+        path=body.file_path,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"share_id": link.id, "expires_at": link.expires_at.isoformat() if link.expires_at else None},
     )
     return link
 
@@ -113,12 +132,24 @@ async def get_link_info(token: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{token}/access")
 async def access_link(
+    request: Request,
     token: str,
     body: ShareAccessRequest = ShareAccessRequest(),
     db: AsyncSession = Depends(get_db),
 ):
     """验证并访问分享链接 (检查提取码/过期/次数)"""
     link = await share_service.validate_and_access(db, token, body.access_code)
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="share_access",
+        resource_type="share",
+        mount_id=link.mount_id,
+        path=link.file_path,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"share_id": link.id, "token": token},
+    )
     return {
         "mount_id": link.mount_id,
         "file_path": link.file_path,
@@ -126,10 +157,51 @@ async def access_link(
     }
 
 
+@router.get("/{token}/download")
+async def download_link(
+    request: Request,
+    token: str,
+    access_code: str = Query("", description="提取码"),
+    db: AsyncSession = Depends(get_db),
+):
+    """通过分享链接匿名下载文件。"""
+    link = await share_service.validate_and_access(db, token, access_code)
+    info = await file_service.get_info(db, link.mount_id, link.file_path)
+    mime = info.mime_type or "application/octet-stream"
+    filename = info.name
+
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="share_download",
+        resource_type="share",
+        mount_id=link.mount_id,
+        path=link.file_path,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"share_id": link.id, "token": token, "size": info.size},
+    )
+
+    async def stream():
+        async for chunk in file_service.download_file(db, link.mount_id, link.file_path):
+            yield chunk
+
+    encoded = quote(filename)
+    return StreamingResponse(
+        stream(),
+        media_type=mime,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
+            "Content-Length": str(info.size) if info.size else "",
+        },
+    )
+
+
 # ── 删除/停用分享链接 ─────────────────────────────────────
 
 @router.delete("/{link_id}", status_code=204)
 async def delete_link(
+    request: Request,
     link_id: int,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -137,13 +209,34 @@ async def delete_link(
     """删除分享链接"""
     is_admin = current_user.role and current_user.role.name == "admin"
     await share_service.delete_share_link(db, link_id, current_user.id, is_admin)
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="share_delete",
+        resource_type="share",
+        user=current_user,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"share_id": link_id},
+    )
 
 
 @router.post("/{link_id}/deactivate", status_code=204)
 async def deactivate_link(
+    request: Request,
     link_id: int,
-    _admin=Depends(require_admin),
+    admin=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """停用分享链接 (管理员)"""
     await share_service.deactivate_link(db, link_id)
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="share_deactivate",
+        resource_type="share",
+        user=admin,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"share_id": link_id},
+    )

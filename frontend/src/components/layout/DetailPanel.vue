@@ -8,6 +8,7 @@
         <component :is="file.is_dir ? Folder : Document" />
       </el-icon>
       <h3 class="file-name">{{ file.name }}</h3>
+      <el-button class="panel-close" :icon="Close" circle text @click="$emit('close')" />
     </div>
 
     <el-divider />
@@ -42,29 +43,72 @@
 </template>
 
 <script setup>
-import { Folder, Document, Download, Edit, DeleteFilled } from '@element-plus/icons-vue'
+import { Folder, Document, Download, Edit, DeleteFilled, Close } from '@element-plus/icons-vue'
 import { formatSize, formatTime } from '@/utils/format'
 
 defineProps({
   file: { type: Object, default: null },
 })
 
-defineEmits(['download', 'rename', 'delete'])
+defineEmits(['download', 'rename', 'delete', 'close'])
 </script>
 
 <style scoped>
 .detail-panel {
-  width: var(--detail-width); background: var(--card-bg);
+  flex: 0 0 clamp(260px, 24vw, var(--detail-width));
+  width: clamp(260px, 24vw, var(--detail-width)); background: var(--card-bg);
   border-left: 1px solid var(--border-color); padding: 20px;
   overflow-y: auto; display: flex; flex-direction: column;
+  min-width: 0;
+  container-type: inline-size;
 }
 .detail-panel.empty { align-items: center; justify-content: center; }
 .panel-header { display: flex; align-items: center; gap: 12px; }
 .file-name { font-size: 15px; word-break: break-all; }
+.panel-close { margin-left: auto; display: none; }
 .meta-list { display: flex; flex-direction: column; gap: 10px; }
 .meta-item { display: flex; flex-direction: column; gap: 2px; }
 .meta-item .label { font-size: 12px; color: var(--text-secondary); }
 .meta-item span:last-child { font-size: 13px; color: var(--text-regular); }
 .path-text { word-break: break-all; font-size: 12px; font-family: monospace; }
-.action-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+.action-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: auto;
+}
+.action-buttons :deep(.el-button) {
+  width: 100%;
+  min-width: 0;
+  margin-left: 0;
+}
+
+@media (max-width: 768px) {
+  .detail-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: var(--mobile-nav-height);
+    z-index: 900;
+    width: auto;
+    flex-basis: auto;
+    max-height: 55vh;
+    border-left: none;
+    border-top: 1px solid var(--border-color);
+    box-shadow: 0 -6px 18px rgba(0,0,0,0.12);
+    border-radius: 12px 12px 0 0;
+  }
+  .detail-panel.empty {
+    display: none;
+  }
+  .panel-close {
+    display: inline-flex;
+  }
+}
+
+@container (max-width: 280px) {
+  .action-buttons {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

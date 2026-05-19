@@ -12,7 +12,7 @@ class TransferTask(BaseModel):
     __tablename__ = "transfer_tasks"
 
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    # 任务类型: upload / download
+    # 任务类型: upload / download / copy / move
     type: Mapped[str] = mapped_column(String(16), nullable=False)
     # 任务状态: pending / running / paused / completed / failed
     status: Mapped[str] = mapped_column(String(16), default="pending")
@@ -23,6 +23,9 @@ class TransferTask(BaseModel):
     source_path: Mapped[str] = mapped_column(Text, nullable=False)
     target_path: Mapped[str] = mapped_column(Text, nullable=False)
     mount_id: Mapped[int | None] = mapped_column(ForeignKey("mounts.id"), nullable=True)
+    source_mount_id: Mapped[int | None] = mapped_column(ForeignKey("mounts.id"), nullable=True)
+    target_mount_id: Mapped[int | None] = mapped_column(ForeignKey("mounts.id"), nullable=True)
+    conflict_policy: Mapped[str] = mapped_column(String(16), default="error")
 
     # 传输进度
     transferred: Mapped[int] = mapped_column(BigInteger, default=0)

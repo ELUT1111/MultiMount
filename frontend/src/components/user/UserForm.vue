@@ -2,7 +2,7 @@
   用户表单对话框 — 创建/编辑用户, 含用户名/邮箱/密码/角色字段。
 -->
 <template>
-  <el-dialog :model-value="modelValue" :title="isEdit ? '编辑用户' : '添加用户'" width="480px"
+  <el-dialog :model-value="modelValue" :title="isEdit ? '编辑用户' : '添加用户'" class="responsive-dialog user-dialog"
     @update:model-value="$emit('update:modelValue', $event)" @close="resetForm">
     <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
       <el-form-item label="用户名" prop="username" required>

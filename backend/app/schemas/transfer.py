@@ -1,10 +1,10 @@
-"""传输任务相关的 Pydantic 数据模型"""
 from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel
 
 
 class TransferTaskOut(BaseModel):
-    """传输任务响应"""
     id: int
     user_id: int | None
     type: str
@@ -14,6 +14,9 @@ class TransferTaskOut(BaseModel):
     source_path: str
     target_path: str
     mount_id: int | None
+    source_mount_id: int | None = None
+    target_mount_id: int | None = None
+    conflict_policy: str = "error"
     transferred: int
     chunk_size: int
     speed: float | None
@@ -25,10 +28,12 @@ class TransferTaskOut(BaseModel):
 
 
 class TransferCreateRequest(BaseModel):
-    """创建传输任务请求"""
-    type: str  # upload / download
-    mount_id: int
+    type: Literal["upload", "download", "copy", "move"]
+    mount_id: int | None = None
+    source_mount_id: int | None = None
+    target_mount_id: int | None = None
     source_path: str
     target_path: str
     file_name: str
     file_size: int | None = None
+    conflict_policy: Literal["error", "overwrite", "skip", "rename"] = "error"

@@ -40,7 +40,9 @@ class LocalAdapter(BaseAdapter):
         """将虚拟路径解析为真实路径, 防止目录遍历"""
         cleaned = path.lstrip("/").replace("\\", "/")
         target = (self._root / cleaned).resolve()
-        if not str(target).startswith(str(self._root)):
+        try:
+            target.relative_to(self._root)
+        except ValueError:
             raise ValueError("路径越界")
         return target
 

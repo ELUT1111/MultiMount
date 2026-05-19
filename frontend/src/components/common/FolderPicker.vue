@@ -1,9 +1,9 @@
 <template>
-  <el-dialog :model-value="modelValue" title="选择文件夹" width="560px" @update:model-value="$emit('update:modelValue', $event)" @open="init">
+  <el-dialog :model-value="modelValue" title="选择文件夹" class="responsive-dialog folder-picker-dialog" @update:model-value="$emit('update:modelValue', $event)" @open="init">
     <!-- 当前路径 -->
     <div class="path-bar">
       <el-icon class="nav-btn" @click="goUp" :disabled="!currentPath"><Top /></el-icon>
-      <el-input v-model="manualPath" size="small" placeholder="输入路径后回车" @keyup.enter="navigateTo(manualPath)" style="flex:1" />
+      <el-input v-model="manualPath" class="path-input" size="small" placeholder="输入路径后回车" @keyup.enter="navigateTo(manualPath)" />
       <el-button size="small" @click="navigateTo(manualPath)" :loading="loading">前往</el-button>
     </div>
 
@@ -96,6 +96,7 @@ function confirm() {
 
 <style scoped>
 .path-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.path-input { flex: 1; min-width: 0; }
 .nav-btn { cursor: pointer; font-size: 18px; color: var(--primary-color); flex-shrink: 0; }
 .nav-btn[disabled] { opacity: 0.3; cursor: not-allowed; }
 .folder-list { height: 320px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 0; }
@@ -107,4 +108,11 @@ function confirm() {
 .folder-name { font-size: 13px; }
 .selected-bar { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .selected-bar .label { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
+@media (max-width: 768px) {
+  .path-bar,
+  .selected-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 </style>

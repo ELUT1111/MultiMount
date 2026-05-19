@@ -14,6 +14,62 @@ from app.utils.path_utils import normalize_path
 
 logger = logging.getLogger("multimount.file")
 
+CONFLICT_POLICIES = {"error", "overwrite", "skip", "rename"}
+
+
+def _split_path(path: str) -> tuple[str, str]:
+    normalized = normalize_path(path)
+    if normalized == "/":
+        return "/", ""
+    parent, _, name = normalized.rpartition("/")
+    return parent or "/", name
+
+
+def _rename_candidate(path: str, index: int) -> str:
+    parent, name = _split_path(path)
+    stem, dot, suffix = name.rpartition(".")
+    if dot and stem:
+        new_name = f"{stem} ({index}).{suffix}"
+    else:
+        new_name = f"{name} ({index})"
+    return parent.rstrip("/") + "/" + new_name if parent != "/" else "/" + new_name
+
+
+async def resolve_conflict(db: AsyncSession, mount_id: int, path: str,
+                           policy: str = "error") -> tuple[str, bool]:
+    """
+    解析目标路径冲突。
+
+    返回 (最终路径, 是否应跳过写入)。
+    """
+    path = normalize_path(path)
+    if policy not in CONFLICT_POLICIES:
+        raise BadRequestException(f"不支持的冲突策略: {policy}")
+
+    exists = True
+    try:
+        await get_info(db, mount_id, path)
+    except NotFoundException:
+        exists = False
+
+    if not exists:
+        return path, False
+    if policy == "skip":
+        return path, True
+    if policy == "overwrite":
+        await delete_file(db, mount_id, path)
+        return path, False
+    if policy == "rename":
+        for i in range(1, 1000):
+            candidate = _rename_candidate(path, i)
+            try:
+                await get_info(db, mount_id, candidate)
+            except NotFoundException:
+                return candidate, False
+        raise BadRequestException("无法生成可用的自动重命名路径")
+
+    raise BadRequestException(f"目标已存在: {path}")
+
 
 async def list_dir(db: AsyncSession, mount_id: int, path: str = "/") -> list[FileInfo]:
     """列出指定挂载点的目录内容"""
@@ -60,9 +116,12 @@ async def download_file(db: AsyncSession, mount_id: int, path: str) -> AsyncIter
 
 
 async def upload_file(db: AsyncSession, mount_id: int, path: str,
-                      data: AsyncIterator[bytes], size: int | None = None) -> FileInfo:
+                      data: AsyncIterator[bytes], size: int | None = None,
+                      conflict_policy: str = "error") -> FileInfo:
     """上传文件到指定挂载点"""
-    path = normalize_path(path)
+    path, should_skip = await resolve_conflict(db, mount_id, path, conflict_policy)
+    if should_skip:
+        return await get_info(db, mount_id, path)
     _, adapter = await get_adapter_for_mount(db, mount_id)
     try:
         await adapter.connect()
@@ -102,10 +161,14 @@ async def make_directory(db: AsyncSession, mount_id: int, path: str) -> FileInfo
         raise BadRequestException(f"创建目录失败: {e}")
 
 
-async def move_file(db: AsyncSession, mount_id: int, src: str, dst: str) -> FileInfo:
+async def move_file(db: AsyncSession, mount_id: int, src: str, dst: str,
+                    conflict_policy: str = "error") -> FileInfo:
     """移动/重命名文件或目录"""
     src = normalize_path(src)
     dst = normalize_path(dst)
+    dst, should_skip = await resolve_conflict(db, mount_id, dst, conflict_policy)
+    if should_skip:
+        return await get_info(db, mount_id, dst)
     _, adapter = await get_adapter_for_mount(db, mount_id)
     try:
         await adapter.connect()
@@ -118,10 +181,14 @@ async def move_file(db: AsyncSession, mount_id: int, src: str, dst: str) -> File
         raise BadRequestException(f"移动失败: {e}")
 
 
-async def copy_file(db: AsyncSession, mount_id: int, src: str, dst: str) -> FileInfo:
+async def copy_file(db: AsyncSession, mount_id: int, src: str, dst: str,
+                    conflict_policy: str = "error") -> FileInfo:
     """复制文件或目录"""
     src = normalize_path(src)
     dst = normalize_path(dst)
+    dst, should_skip = await resolve_conflict(db, mount_id, dst, conflict_policy)
+    if should_skip:
+        return await get_info(db, mount_id, dst)
     _, adapter = await get_adapter_for_mount(db, mount_id)
     try:
         await adapter.connect()

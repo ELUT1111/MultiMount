@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.core.policy import enforce_file_policy
 from app.services.mount_permission_service import check_mount_access
 
 
@@ -53,6 +54,17 @@ def check_basic_permission(permission: str):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"缺少权限: {permission}",
             )
+        return current_user
+
+    return _check
+
+
+def require_file_action(action: str):
+    """文件动作权限依赖工厂: 基础角色权限 + 挂载点授权。"""
+
+    async def _check(mount_id: int, current_user=Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+        await enforce_file_policy(db, current_user, mount_id, action)
         return current_user
 
     return _check

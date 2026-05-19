@@ -17,6 +17,7 @@ from app.models.ip_blacklist import IPBlacklist
 from app.schemas.ip_blacklist import IPBlacklistCreate, IPBlacklistOut
 from app.services import system_service
 from app.services import ip_blacklist_service
+from app.services import operation_log_service
 
 router = APIRouter()
 
@@ -221,6 +222,29 @@ async def get_access_stats(
         "top_ips": [{"ip": ip, "count": cnt} for ip, cnt in top_ips],
         "top_paths": [{"path": p, "count": cnt} for p, cnt in top_paths],
     }
+
+
+@router.get("/operation-logs")
+async def get_operation_logs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    action: str = Query("", description="按操作类型筛选"),
+    username: str = Query("", description="按用户名筛选"),
+    mount_id: int | None = Query(None, description="按挂载 ID 筛选"),
+    status: str = Query("", regex="^(|success|failed)$"),
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    """分页查询业务操作审计日志。"""
+    return await operation_log_service.list_operation_logs(
+        db,
+        page=page,
+        page_size=page_size,
+        action=action,
+        username=username,
+        mount_id=mount_id,
+        status=status,
+    )
 
 
 # ── IP 黑名单管理 ────────────────────────────────────────────

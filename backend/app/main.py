@@ -14,11 +14,28 @@ from app.database import init_db
 settings = get_settings()
 
 
+def _validate_security_config() -> None:
+    """阻止生产环境使用不安全的默认配置。"""
+    default_jwt_secrets = {
+        "CHANGE_ME_TO_A_RANDOM_SECRET_KEY",
+        "multimount-dev-secret-key-change-in-production",
+    }
+    errors = []
+    if settings.JWT_SECRET_KEY in default_jwt_secrets:
+        errors.append("JWT_SECRET_KEY 不能使用默认值")
+    if not settings.ENCRYPTION_KEY:
+        errors.append("ENCRYPTION_KEY 必须设置为固定密钥")
+
+    if errors and not settings.DEBUG:
+        raise RuntimeError("生产配置不安全: " + "; ".join(errors))
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """应用生命周期: 启动时初始化数据库和目录"""
     logger = setup_logging(debug=settings.DEBUG)
     logger.info("MultiMount 正在启动...")
+    _validate_security_config()
 
     # 确保数据目录存在
     Path("data").mkdir(exist_ok=True)

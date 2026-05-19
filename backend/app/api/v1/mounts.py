@@ -8,7 +8,7 @@ from app.models.user import User
 from app.schemas.mount import MountCreate, MountOut, MountUpdate
 from app.services import mount_service
 from app.core.mount_permissions import check_basic_permission
-from app.services.mount_permission_service import check_mount_access
+from app.services.mount_permission_service import check_mount_access, get_accessible_mount_ids
 
 router = APIRouter()
 
@@ -66,6 +66,8 @@ async def list_mounts(
     db: AsyncSession = Depends(get_db),
 ):
     all_mounts = await mount_service.list_mounts(db)
+    accessible_ids = await get_accessible_mount_ids(db, user)
+    all_mounts = [m for m in all_mounts if m.id in accessible_ids]
     out = [_mount_to_out(m) for m in all_mounts]
     out = await _enrich_owner_names(out, db)
     out = await _enrich_my_level(out, user, db)
@@ -93,6 +95,7 @@ async def get_mount(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await check_mount_access(db, mount_id, user, "read")
     mount = await mount_service.get_mount(db, mount_id)
     out = _mount_to_out(mount)
     out = (await _enrich_owner_names([out], db))[0]
@@ -110,7 +113,7 @@ async def update_mount(
     # 管理员可编辑任意挂载, 普通用户仅可编辑自己的
     is_admin = user.role and user.role.name == "admin"
     existing = await mount_service.get_mount(db, mount_id)
-    if not is_admin and existing.user_id and existing.user_id != user.id:
+    if not is_admin and existing.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能编辑自己创建的挂载")
     mount = await mount_service.update_mount(
         db, mount_id,
@@ -134,8 +137,11 @@ async def delete_mount(
 @router.post("/{mount_id}/test")
 async def test_connection(
     mount_id: int,
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    mount = await mount_service.get_mount(db, mount_id)
+    if mount.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能测试自己创建的挂载")
     ok = await mount_service.test_mount_connection(db, mount_id)
     return {"success": ok, "message": "连接成功" if ok else "连接失败"}

@@ -1,8 +1,22 @@
+from pathlib import PurePosixPath
+
+from app.core.exceptions import BadRequestException
+
+
 def normalize_path(path: str) -> str:
-    """规范化路径: 统一使用 /, 去除多余分隔符"""
+    """规范化虚拟路径: 统一使用 /, 并拒绝目录穿越。"""
     if not path:
         return "/"
-    parts = [p for p in path.replace("\\", "/").split("/") if p and p != "."]
+    if "\x00" in path:
+        raise BadRequestException("路径包含非法字符")
+
+    parts = []
+    for part in path.replace("\\", "/").split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            raise BadRequestException("路径不能包含上级目录引用")
+        parts.append(part)
     return "/" + "/".join(parts) if parts else "/"
 
 
@@ -22,3 +36,15 @@ def parent_path(path: str) -> str:
         return "/"
     parts = normalized.strip("/").split("/")
     return "/" + "/".join(parts[:-1]) if len(parts) > 1 else "/"
+
+
+def safe_upload_filename(filename: str | None) -> str:
+    """校验上传文件名, 禁止客户端通过文件名携带路径。"""
+    if not filename or "\x00" in filename:
+        raise BadRequestException("文件名无效")
+
+    normalized = filename.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if path.name != normalized or path.name in ("", ".", ".."):
+        raise BadRequestException("文件名不能包含路径")
+    return path.name

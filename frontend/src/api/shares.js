@@ -19,6 +19,13 @@ export const getShareInfo = (token) => request.get(`/shares/${token}/info`)
 export const accessShare = (token, accessCode = '') =>
   request.post(`/shares/${token}/access`, { access_code: accessCode })
 
+/** 通过分享链接下载文件 */
+export const downloadShare = (token, accessCode = '') =>
+  request.get(`/shares/${token}/download`, {
+    params: { access_code: accessCode },
+    responseType: 'blob',
+  })
+
 /** 删除分享链接 */
 export const deleteShare = (linkId) => request.delete(`/shares/${linkId}`)
 

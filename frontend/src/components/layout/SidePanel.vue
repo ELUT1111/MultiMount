@@ -1,18 +1,18 @@
 <template>
-  <aside class="side-panel">
+  <aside class="side-panel" :class="{ compact, collapsed }">
     <nav class="nav-menu">
       <div v-for="item in menuItems" :key="item.path"
            class="nav-item" :class="{ active: currentPath === item.path }"
            @click="$router.push(item.path)">
         <el-icon :size="18"><component :is="item.icon" /></el-icon>
-        <span>{{ item.label }}</span>
+        <span class="nav-label">{{ item.label }}</span>
       </div>
     </nav>
 
-    <el-divider />
+    <el-divider class="mount-divider" />
 
-    <div class="section-title">已挂载资源</div>
-    <div class="mount-list">
+    <div class="section-title mount-section">已挂载资源</div>
+    <div class="mount-list mount-section">
       <!-- 按挂载类型分组显示 -->
       <template v-for="group in groupedMounts" :key="group.type">
         <div class="group-label">{{ group.label }}</div>
@@ -27,9 +27,9 @@
       <div v-if="mounts.mounts.length === 0" class="empty-hint">暂无挂载</div>
     </div>
 
-    <div class="sidebar-bottom">
+    <div class="sidebar-bottom mount-section">
       <div class="webdav-toggle" v-if="auth.isAdmin">
-        <span>WebDAV 服务</span>
+        <span class="webdav-label">WebDAV 服务</span>
         <el-switch v-model="webdavRunning" size="small" :loading="webdavLoading" @change="toggleWebDAV" />
       </div>
       <el-button type="primary" size="small" plain style="width:100%" @click="$router.push('/mounts')">
@@ -48,6 +48,11 @@ import { useMountsStore } from '@/stores/mounts'
 import { useFilesStore } from '@/stores/files'
 import { useAuthStore } from '@/stores/auth'
 import { getWebDAVStatus, startWebDAV, stopWebDAV } from '@/api/webdav'
+
+defineProps({
+  compact: { type: Boolean, default: false },
+  collapsed: { type: Boolean, default: false },
+})
 
 const route = useRoute()
 const mounts = useMountsStore()
@@ -121,13 +126,16 @@ onMounted(async () => {
 
 <style scoped>
 .side-panel {
-  width: var(--sidebar-width);
+  width: 100%;
+  height: 100%;
   background: var(--card-bg);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   padding: 12px;
   overflow-y: auto;
+  overflow-x: hidden;
+  transition: padding 0.18s ease, opacity 0.12s ease;
 }
 .nav-menu { display: flex; flex-direction: column; gap: 4px; }
 .nav-item {
@@ -138,6 +146,7 @@ onMounted(async () => {
 }
 .nav-item:hover { background: rgba(64, 158, 255, 0.08); color: var(--primary-color); }
 .nav-item.active { background: rgba(64, 158, 255, 0.12); color: var(--primary-color); font-weight: 600; }
+.nav-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .section-title { font-size: 12px; color: var(--text-secondary); padding: 8px 12px 4px; }
 .mount-list { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .mount-item {
@@ -155,5 +164,63 @@ onMounted(async () => {
 .webdav-toggle {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 0; font-size: 13px; color: var(--text-regular);
+}
+.side-panel.compact {
+  padding: 10px 8px;
+}
+.side-panel.compact .nav-item {
+  justify-content: center;
+  gap: 0;
+  padding: 10px 6px;
+}
+.side-panel.compact .nav-label,
+.side-panel.compact .mount-section,
+.side-panel.compact .mount-divider {
+  display: none;
+}
+.side-panel.collapsed {
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  border-right: none;
+}
+
+@media (max-width: 768px) {
+  .side-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    width: auto;
+    height: var(--mobile-nav-height);
+    border-right: none;
+    border-top: 1px solid var(--border-color);
+    padding: 6px 8px;
+    overflow: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .nav-menu {
+    height: 100%;
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 2px;
+  }
+  .nav-item {
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 5px 2px;
+    font-size: 11px;
+    border-radius: 6px;
+  }
+  .nav-item :deep(.el-icon) { font-size: 17px; }
+  .mount-section,
+  .mount-divider {
+    display: none;
+  }
 }
 </style>

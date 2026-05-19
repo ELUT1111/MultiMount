@@ -46,6 +46,9 @@ export const getAccessLogs = (params) => request.get('/system/access-logs', { pa
 /** 获取访问统计摘要 */
 export const getAccessStats = () => request.get('/system/access-stats')
 
+/** 分页获取业务操作审计日志 */
+export const getOperationLogs = (params) => request.get('/system/operation-logs', { params })
+
 /** 获取 IP 黑名单列表 */
 export const getIPBlacklist = () => request.get('/system/ip-blacklist')
 

@@ -2,6 +2,7 @@
   --sidebar-width: 240px;
   --topbar-height: 56px;
   --detail-width: 300px;
+  --mobile-nav-height: 58px;
   --bp-sm: 768px;
   --bp-md: 1024px;
   --primary-color: #409eff;
@@ -54,6 +55,46 @@ html, body, #app {
 .dark .el-radio-button__inner { background: #252525; border-color: var(--border-color); color: var(--text-regular); }
 .dark code { background: #2a2a2a; }
 
+/* 通用响应式布局工具 */
+.responsive-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, max-content));
+  gap: 8px;
+  align-items: center;
+}
+.responsive-filters > .el-input,
+.responsive-filters > .el-select,
+.responsive-filters > .el-input-number {
+  width: 100%;
+  min-width: 0;
+}
+.responsive-dialog {
+  width: min(var(--dialog-width, 560px), calc(100vw - 24px)) !important;
+}
+.mount-dialog { --dialog-width: 600px; }
+.perm-dialog { --dialog-width: 520px; }
+.request-dialog { --dialog-width: 420px; }
+.user-dialog { --dialog-width: 480px; }
+.folder-picker-dialog { --dialog-width: 560px; }
+.confirm-dialog { --dialog-width: 400px; }
+.preview-dialog { --dialog-width: min(920px, 90vw); }
+.responsive-dialog .el-dialog__body {
+  max-height: min(72vh, 680px);
+  overflow: auto;
+}
+.danger-action {
+  color: var(--el-color-danger) !important;
+  font-weight: 600;
+}
+.danger-action .el-icon {
+  color: var(--el-color-danger) !important;
+}
+.danger-action:hover,
+.danger-action:focus {
+  background: var(--el-color-danger-light-9) !important;
+  color: var(--el-color-danger) !important;
+}
+
 /* 骨架屏加载动画 */
 .skeleton {
   background: linear-gradient(90deg, var(--border-color) 25%, rgba(255,255,255,0.3) 50%, var(--border-color) 75%);
@@ -100,6 +141,18 @@ html, body, #app {
 @media (max-width: 768px) {
   :root {
     --sidebar-width: 64px;
+  }
+  .responsive-filters {
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  }
+  .responsive-filters > .el-button {
+    width: 100%;
+  }
+  .hide-sm {
+    display: none !important;
+  }
+  .responsive-dialog {
+    --dialog-width: calc(100vw - 24px);
   }
 }
 

@@ -34,7 +34,7 @@ class ShareLink(BaseModel):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # 提取码 (可选, 空表示无需提取码)
-    access_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    access_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     def __repr__(self):
         return f"<ShareLink {self.token}>"

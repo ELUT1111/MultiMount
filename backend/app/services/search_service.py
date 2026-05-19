@@ -118,6 +118,7 @@ async def _recursive_search(
                 "is_dir": item.is_dir,
                 "size": item.size,
                 "modified_at": item.modified_at.isoformat() if item.modified_at else None,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
                 "mime_type": item.mime_type,
                 "mount_id": mount_id,
                 "mount_name": mount_name,
