@@ -35,8 +35,22 @@
           <el-form-item v-if="info.has_access_code" label="提取码">
             <el-input v-model="accessCode" placeholder="请输入提取码" show-password @keyup.enter="handleAccess" />
           </el-form-item>
+          <div v-if="info.is_dir" class="dir-browser">
+            <div class="dir-toolbar">
+              <el-button size="small" :disabled="dirPath === '/'" @click="goUp">上级</el-button>
+              <span>{{ dirPath }}</span>
+            </div>
+            <div v-loading="dirLoading" class="dir-list">
+              <button v-for="item in dirItems" :key="item.path" class="dir-item" @click="item.is_dir ? openDir(item) : null">
+                <el-icon><Folder v-if="item.is_dir" /><Document v-else /></el-icon>
+                <span>{{ item.name }}</span>
+                <small v-if="!item.is_dir">{{ formatSize(item.size) }}</small>
+              </button>
+              <el-empty v-if="!dirLoading && verified && !dirItems.length" description="目录为空" :image-size="48" />
+            </div>
+          </div>
           <el-button type="primary" :loading="accessing" @click="handleAccess">
-            {{ verified ? '重新下载' : '下载文件' }}
+            {{ info.is_dir ? '下载目录 ZIP' : (verified ? '重新下载' : '下载文件') }}
           </el-button>
         </el-form>
       </template>
@@ -47,9 +61,10 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Document, Link } from '@element-plus/icons-vue'
+import { Document, Folder, Link } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { downloadShare, getShareInfo } from '@/api/shares'
+import { downloadShare, getShareInfo, listShareDir } from '@/api/shares'
+import { formatSize } from '@/utils/format'
 
 const route = useRoute()
 const token = computed(() => route.params.token)
@@ -59,6 +74,9 @@ const error = ref('')
 const info = ref({})
 const accessCode = ref('')
 const verified = ref(false)
+const dirLoading = ref(false)
+const dirPath = ref('/')
+const dirItems = ref([])
 
 const fileName = computed(() => {
   const path = info.value.file_path || ''
@@ -84,6 +102,10 @@ async function loadInfo() {
 async function handleAccess() {
   accessing.value = true
   try {
+    if (info.value.is_dir && !verified.value) {
+      await loadDir('/')
+      verified.value = true
+    }
     const blob = await downloadShare(token.value, accessCode.value)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -97,6 +119,29 @@ async function handleAccess() {
   } finally {
     accessing.value = false
   }
+}
+
+async function loadDir(path = '/') {
+  dirLoading.value = true
+  try {
+    dirItems.value = await listShareDir(token.value, path, accessCode.value)
+    dirPath.value = path
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '目录加载失败')
+  } finally {
+    dirLoading.value = false
+  }
+}
+
+function openDir(item) {
+  const next = item.path === '/' ? '/' : '/' + item.path.replace(/^\/+/, '')
+  loadDir(next)
+}
+
+function goUp() {
+  const parts = dirPath.value.split('/').filter(Boolean)
+  parts.pop()
+  loadDir(parts.length ? '/' + parts.join('/') : '/')
 }
 
 onMounted(loadInfo)
@@ -159,4 +204,38 @@ onMounted(loadInfo)
   flex-direction: column;
   gap: 10px;
 }
+.dir-browser {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dir-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(64,158,255,0.06);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.dir-list {
+  min-height: 120px;
+  max-height: 260px;
+  overflow: auto;
+}
+.dir-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.dir-item small { color: var(--text-secondary); }
 </style>

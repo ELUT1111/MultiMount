@@ -4,7 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.database import Base
-from app.models import user, role, mount  # noqa: F401 — 触发模型注册
+import app.models  # noqa: F401 — 触发全部模型注册
 
 config = context.config
 if config.config_file_name is not None:

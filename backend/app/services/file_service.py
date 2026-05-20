@@ -3,6 +3,7 @@
 负责: 路径校验 → 权限检查 → 调用适配器 → 返回结果。
 """
 import logging
+from pathlib import PurePosixPath
 from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.base import FileInfo
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.services.mount_service import get_adapter_for_mount
+from app.services.trash_service import is_trash_path
 from app.utils.path_utils import normalize_path
 
 logger = logging.getLogger("multimount.file")
@@ -78,10 +80,7 @@ async def list_dir(db: AsyncSession, mount_id: int, path: str = "/") -> list[Fil
     try:
         await adapter.connect()
         items = await adapter.list_dir(path)
-        return [
-            item for item in items
-            if item.path != "/.mounthub_trash" and not item.path.startswith("/.mounthub_trash/")
-        ]
+        return [item for item in items if not is_trash_path(item.path)]
     except FileNotFoundError:
         raise NotFoundException(f"目录不存在: {path}")
     except Exception as e:
@@ -209,3 +208,55 @@ async def copy_file(db: AsyncSession, mount_id: int, src: str, dst: str,
     except Exception as e:
         logger.error("copy 失败 mount=%d %s -> %s: %s", mount_id, src, dst, e)
         raise BadRequestException(f"复制失败: {e}")
+
+
+async def iter_files_recursive(
+    db: AsyncSession,
+    mount_id: int,
+    path: str,
+    *,
+    base_name: str | None = None,
+) -> AsyncIterator[tuple[str, FileInfo]]:
+    """Yield (relative archive path, info) for a file or directory tree."""
+    root = normalize_path(path)
+    info = await get_info(db, mount_id, root)
+    root_name = base_name or info.name or PurePosixPath(root).name or "root"
+    if not info.is_dir:
+        yield root_name, info
+        return
+
+    async def _walk(current_path: str, relative_prefix: str):
+        for item in await list_dir(db, mount_id, current_path):
+            if is_trash_path(item.path):
+                continue
+            relative = f"{relative_prefix}/{item.name}" if relative_prefix else item.name
+            if item.is_dir:
+                async for child in _walk(item.path, relative):
+                    yield child
+            else:
+                yield relative, item
+
+    async for child in _walk(root, root_name):
+        yield child
+
+
+async def directory_stats(db: AsyncSession, mount_id: int, path: str) -> dict:
+    """Return recursive directory size and item counts."""
+    root = normalize_path(path)
+    info = await get_info(db, mount_id, root)
+    if not info.is_dir:
+        return {"path": root, "total_size": info.size, "file_count": 1, "dir_count": 0}
+
+    stats = {"path": root, "total_size": 0, "file_count": 0, "dir_count": 0}
+
+    async def _walk(current_path: str):
+        for item in await list_dir(db, mount_id, current_path):
+            if item.is_dir:
+                stats["dir_count"] += 1
+                await _walk(item.path)
+            else:
+                stats["file_count"] += 1
+                stats["total_size"] += item.size or 0
+
+    await _walk(root)
+    return stats

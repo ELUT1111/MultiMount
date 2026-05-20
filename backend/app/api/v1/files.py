@@ -4,10 +4,14 @@
 权限校验: 读操作需 read 权限, 写操作需 readwrite 权限。
 """
 from pathlib import PurePosixPath
+import os
+import tempfile
+import zipfile
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File as FastAPIFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -18,6 +22,8 @@ from app.schemas.file import (
     BatchFileRequest,
     BatchFileResponse,
     BatchFileResult,
+    BatchDownloadRequest,
+    DirectoryStatsOut,
     FileInfoOut,
     MoveCopyRequest,
     MultipartUploadInit,
@@ -112,6 +118,84 @@ async def download_file(
         media_type=mime,
         headers=_download_headers(filename, info.size),
     )
+
+
+@router.post("/batch-download")
+async def batch_download_zip(
+    request: Request,
+    body: BatchDownloadRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """将多挂载、多文件/目录打包为 ZIP 下载。"""
+    tmp = tempfile.NamedTemporaryFile(prefix="mounthub_", suffix=".zip", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+
+    used_names: set[str] = set()
+
+    def unique_name(name: str) -> str:
+        safe = name.strip("/").replace("\\", "/") or "files"
+        if safe not in used_names:
+            used_names.add(safe)
+            return safe
+        stem, dot, suffix = safe.rpartition(".")
+        for i in range(1, 10000):
+            candidate = f"{stem} ({i}).{suffix}" if dot else f"{safe} ({i})"
+            if candidate not in used_names:
+                used_names.add(candidate)
+                return candidate
+        return safe
+
+    try:
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for item in body.items:
+                await enforce_file_policy(db, current_user, item.mount_id, "download")
+                info = await file_service.get_info(db, item.mount_id, item.path)
+                root_name = unique_name(info.name or PurePosixPath(item.path).name or f"mount-{item.mount_id}")
+                async for relative_path, file_info in file_service.iter_files_recursive(
+                    db, item.mount_id, item.path, base_name=root_name
+                ):
+                    if file_info.is_dir:
+                        continue
+                    with zf.open(relative_path, "w") as dest:
+                        async for chunk in file_service.download_file(db, item.mount_id, file_info.path):
+                            dest.write(chunk)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="file_batch_download_zip",
+        user=current_user,
+        resource_type="file",
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"item_count": len(body.items), "size": os.path.getsize(tmp_path)},
+    )
+
+    return FileResponse(
+        tmp_path,
+        media_type="application/zip",
+        filename="mounthub-download.zip",
+        background=BackgroundTask(lambda: os.path.exists(tmp_path) and os.unlink(tmp_path)),
+    )
+
+
+@router.get("/{mount_id}/stats", response_model=DirectoryStatsOut)
+async def directory_stats(
+    mount_id: int,
+    path: str = Query(..., description="文件或目录路径"),
+    _user=Depends(require_file_action("info")),
+    db: AsyncSession = Depends(get_db),
+):
+    """递归统计目录大小、文件数量和目录数量。"""
+    return await file_service.directory_stats(db, mount_id, path)
 
 
 @router.post("/{mount_id}/upload", response_model=FileInfoOut)

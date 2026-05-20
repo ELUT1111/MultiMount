@@ -46,9 +46,22 @@
         <el-button size="small" @click="handleBatchMove" :disabled="!selectedFiles.length || !canWriteCurrentMount">
           移动
         </el-button>
+        <el-button size="small" @click="handleBatchRename" :disabled="!selectedFiles.length || !canWriteCurrentMount">
+          重命名
+        </el-button>
         <el-button size="small" :icon="Share" @click="handleBatchShare" :disabled="!selectedFiles.length">
           分享
         </el-button>
+        <el-dropdown trigger="click" @command="handleSelectionCommand">
+          <el-button size="small" :disabled="!displayFiles.length">选择</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="invert">反选</el-dropdown-item>
+              <el-dropdown-item command="files">仅文件</el-dropdown-item>
+              <el-dropdown-item command="dirs">仅目录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button size="small" @click="clearSelection" :disabled="!selectedFiles.length">清空选择</el-button>
         <el-button size="small" type="danger" plain @click="handleBatchDelete" :disabled="!selectedFiles.length">
           删除
@@ -217,6 +230,9 @@
                   <el-button class="action-button" text :icon="MoreFilled" aria-label="更多操作" />
                   <template #dropdown>
                     <el-dropdown-menu>
+                      <el-dropdown-item v-if="!row.is_dir" command="share" :icon="Share">生成分享链接</el-dropdown-item>
+                      <el-dropdown-item v-else command="share" :icon="Share">分享目录</el-dropdown-item>
+                      <el-dropdown-item v-if="row.is_dir" command="stats">目录统计</el-dropdown-item>
                       <el-dropdown-item command="rename" :icon="Edit">重命名</el-dropdown-item>
                       <el-dropdown-item command="move">移动</el-dropdown-item>
                       <el-dropdown-item class="danger-action" command="delete" :icon="Delete" divided>删除</el-dropdown-item>
@@ -267,6 +283,42 @@
     <!-- 文件预览 -->
     <FilePreview v-model="showPreview" :mount-id="files.currentMountId" :file="previewFile" @download="handleDownload(previewFile)" />
 
+    <el-dialog v-model="showShareDialog" title="生成分享链接" width="420px" append-to-body>
+      <el-form label-width="110px">
+        <el-form-item label="分享对象">
+          <span>{{ shareTargets.length }} 个文件</span>
+        </el-form-item>
+        <el-form-item label="有效期">
+          <el-input-number v-model="shareOptions.expires_hours" :min="0" :max="8760" :step="1" controls-position="right" />
+          <span class="field-hint">小时，0 表示永不过期</span>
+        </el-form-item>
+        <el-form-item label="访问次数">
+          <el-input-number v-model="shareOptions.max_views" :min="0" :step="1" controls-position="right" />
+          <span class="field-hint">0 表示不限制</span>
+        </el-form-item>
+        <el-form-item label="提取码">
+          <el-input v-model="shareOptions.access_code" maxlength="64" show-word-limit placeholder="留空表示不需要" />
+        </el-form-item>
+        <el-form-item label="链接清单">
+          <el-checkbox v-model="shareExportList">生成后导出 .txt 清单</el-checkbox>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showShareDialog = false">取消</el-button>
+        <el-button type="primary" :loading="shareSubmitting" @click="submitShareDialog">生成并复制</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showBatchResultDialog" title="批量操作详情" width="560px" append-to-body>
+      <el-table :data="batchResultRows" max-height="320" size="small">
+        <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="message" label="结果" min-width="220" show-overflow-tooltip />
+      </el-table>
+      <template #footer>
+        <el-button @click="showBatchResultDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 上传进度 -->
     <div v-if="upload.uploading.value" class="upload-bar">
       <span>正在上传: {{ upload.currentFile.value }}</span>
@@ -280,7 +332,8 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Delete, Document, Download, Edit, Folder, FolderAdd, MoreFilled, Share, UploadFilled, View } from '@element-plus/icons-vue'
-import { batchFileOperation, deleteFile, createDirectory, moveFile, downloadFile, createShareLink } from '@/api/files'
+import { batchDownloadZip, batchFileOperation, deleteFile, createDirectory, moveFile, downloadFile, createShareLink, getDirectoryStats } from '@/api/files'
+import { createTransfer } from '@/api/transfers'
 import { formatSize, formatTime } from '@/utils/format'
 import { useFilesStore } from '@/stores/files'
 import { useUpload } from '@/composables/useUpload'
@@ -308,6 +361,17 @@ const selectedFiles = ref([])
 const selectionAnchorKey = ref('')
 const focusedFileKey = ref('')
 const syncingTableSelection = ref(false)
+const showShareDialog = ref(false)
+const shareSubmitting = ref(false)
+const shareTargets = ref([])
+const shareOptions = ref({
+  expires_hours: 0,
+  max_views: 0,
+  access_code: '',
+})
+const shareExportList = ref(true)
+const showBatchResultDialog = ref(false)
+const batchResultRows = ref([])
 
 const currentMount = computed(() => mounts.mounts.find((m) => m.id === files.currentMountId) || null)
 const canWriteCurrentMount = computed(() => currentMount.value?.my_level === 'readwrite')
@@ -386,7 +450,9 @@ function handleSortHeaderContextMenu(field) {
 }
 
 function handleRowCommand(command, row) {
-  if (command === 'rename') handleRename(row)
+  if (command === 'share') handleShare(row)
+  else if (command === 'stats') handleDirectoryStats(row)
+  else if (command === 'rename') handleRename(row)
   else if (command === 'move') handleMove(row)
   else if (command === 'delete') handleDelete(row)
 }
@@ -493,6 +559,17 @@ function toggleFileSelection(file) {
   setSelectedFiles(nextSelection, idx >= 0 ? (nextSelection.at(-1) || null) : file)
 }
 
+function handleSelectionCommand(command) {
+  if (command === 'invert') {
+    const selected = new Set(selectedFiles.value.map(fileKey))
+    setSelectedFiles(displayFiles.value.filter((file) => !selected.has(fileKey(file))))
+  } else if (command === 'files') {
+    setSelectedFiles(displayFiles.value.filter((file) => !file.is_dir))
+  } else if (command === 'dirs') {
+    setSelectedFiles(displayFiles.value.filter((file) => file.is_dir))
+  }
+}
+
 function isTypingTarget(target) {
   const tag = target?.tagName?.toLowerCase()
   return tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable
@@ -569,6 +646,30 @@ function handleFileBrowserKeydown(event) {
       handleDblClick(file)
     }
   }
+
+  if (event.key === 'Delete' && selectedFiles.value.length) {
+    event.preventDefault()
+    handleBatchDelete()
+    return
+  }
+
+  const lower = event.key.toLowerCase()
+  if ((event.ctrlKey || event.metaKey) && lower === 'c' && selectedFiles.value.length === 1) {
+    event.preventDefault()
+    clipboard.value = { action: 'copy', file: selectedFiles.value[0] }
+    ElMessage.success('已复制到剪贴板')
+    return
+  }
+  if ((event.ctrlKey || event.metaKey) && lower === 'x' && selectedFiles.value.length === 1) {
+    event.preventDefault()
+    clipboard.value = { action: 'cut', file: selectedFiles.value[0] }
+    ElMessage.success('已剪切到剪贴板')
+    return
+  }
+  if ((event.ctrlKey || event.metaKey) && lower === 'v' && clipboard.value) {
+    event.preventDefault()
+    handleContextAction({ action: 'paste', file: clipboard.value.file })
+  }
 }
 
 function selectedMountId(file) {
@@ -592,6 +693,16 @@ function finishBatchMessage(actionText, successCount, failedCount) {
   }
 }
 
+function showBatchDetails(results = []) {
+  const rows = results.filter((item) => !item.success).map((item) => ({
+    path: item.path,
+    message: item.message || '失败',
+  }))
+  if (!rows.length) return
+  batchResultRows.value = rows
+  showBatchResultDialog.value = true
+}
+
 function resetBatchAfterChange() {
   clearSelection()
   batchMode.value = false
@@ -599,33 +710,29 @@ function resetBatchAfterChange() {
 }
 
 async function handleBatchDownload() {
-  const downloadable = selectedFiles.value.filter((file) => !file.is_dir)
-  const skipped = selectedFiles.value.length - downloadable.length
-  if (!downloadable.length) return ElMessage.warning('选中的项目中没有可下载文件')
-
-  let successCount = 0
-  let failedCount = 0
-  for (const file of downloadable) {
-    try {
-      const blob = await downloadFile(selectedMountId(file), file.path)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = file.name
-      a.click()
-      URL.revokeObjectURL(url)
-      successCount += 1
-    } catch {
-      failedCount += 1
-    }
+  if (!selectedFiles.value.length) return
+  try {
+    const blob = await batchDownloadZip(selectedFiles.value.map((file) => ({
+      mount_id: selectedMountId(file),
+      path: file.path,
+    })))
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'mounthub-download.zip'
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('批量下载已开始')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '批量下载失败')
   }
-  finishBatchMessage('下载', successCount, failedCount + skipped)
 }
 
 async function runBatchTransfer(action) {
   const groups = groupSelectedByMount()
+  const targetMountId = await chooseTargetMountId(action)
   if (Object.keys(groups).length !== 1) {
-    ElMessage.warning('批量复制/移动仅支持同一挂载源内的项目')
+    await runCrossMountTransfers(action, targetMountId)
     return
   }
   const { value } = await ElMessageBox.prompt('请输入目标目录路径', action === 'copy' ? '批量复制' : '批量移动', {
@@ -633,6 +740,10 @@ async function runBatchTransfer(action) {
     inputValidator: (v) => !!v.trim() || '路径不能为空',
   })
   const mountId = Number(Object.keys(groups)[0])
+  if (targetMountId && targetMountId !== mountId) {
+    await runCrossMountTransfers(action, targetMountId, value.trim())
+    return
+  }
   const res = await batchFileOperation(mountId, {
     action,
     target_dir: value.trim(),
@@ -640,6 +751,43 @@ async function runBatchTransfer(action) {
     items: groups[mountId].map((file) => ({ path: file.path })),
   })
   finishBatchMessage(action === 'copy' ? '复制' : '移动', res.success_count, res.failed_count)
+  showBatchDetails(res.results)
+  resetBatchAfterChange()
+}
+
+async function chooseTargetMountId(action) {
+  if (!mounts.mounts.length) return files.currentMountId
+  const options = mounts.mounts.map((m) => `${m.id}: ${m.name}`).join('\n')
+  const { value } = await ElMessageBox.prompt(`目标挂载 ID，可选:\n${options}`, action === 'copy' ? '选择复制目标' : '选择移动目标', {
+    inputValue: String(files.currentMountId),
+    inputValidator: (v) => Number(v) > 0 || '请输入有效挂载 ID',
+  })
+  return Number(value)
+}
+
+async function runCrossMountTransfers(action, targetMountId, targetDir = files.currentPath) {
+  const filesOnly = selectedFiles.value.filter((file) => !file.is_dir)
+  const skipped = selectedFiles.value.length - filesOnly.length
+  const results = await Promise.allSettled(filesOnly.map((file) => createTransfer({
+    type: action,
+    source_mount_id: selectedMountId(file),
+    target_mount_id: targetMountId,
+    source_path: file.path,
+    target_path: `${targetDir.replace(/\/$/, '')}/${file.name}`,
+    file_name: file.name,
+    file_size: file.size,
+    conflict_policy: 'rename',
+  })))
+  const failed = results.filter((r) => r.status === 'rejected').length + skipped
+  const success = results.filter((r) => r.status === 'fulfilled').length
+  finishBatchMessage(action === 'copy' ? '复制任务' : '移动任务', success, failed)
+  if (skipped) {
+    batchResultRows.value = selectedFiles.value.filter((file) => file.is_dir).map((file) => ({
+      path: file.path,
+      message: '跨挂载目录传输暂未支持，已跳过',
+    }))
+    showBatchResultDialog.value = true
+  }
   resetBatchAfterChange()
 }
 
@@ -651,21 +799,92 @@ async function handleBatchMove() {
   await runBatchTransfer('move')
 }
 
-async function handleBatchShare() {
-  const shareable = selectedFiles.value.filter((file) => !file.is_dir)
-  const skipped = selectedFiles.value.length - shareable.length
-  if (!shareable.length) return ElMessage.warning('选中的项目中没有可分享文件')
-
-  const results = await Promise.allSettled(
-    shareable.map((file) => createShareLink(selectedMountId(file), file.path))
-  )
-  const links = results
-    .filter((result) => result.status === 'fulfilled')
-    .map((result) => `${location.origin}/share/${result.value.token}`)
-  if (links.length) {
-    await navigator.clipboard.writeText(links.join('\n'))
+async function handleBatchRename() {
+  const targets = selectedFiles.value
+  if (!targets.length) return
+  const { value: prefix } = await ElMessageBox.prompt('请输入批量重命名前缀', '批量重命名', {
+    inputValue: 'file',
+    inputValidator: (v) => !!v.trim() || '前缀不能为空',
+  })
+  const results = await Promise.allSettled(targets.map((file, index) => {
+    const parent = file.path.substring(0, file.path.lastIndexOf('/')) || '/'
+    const suffix = file.is_dir ? '' : (file.name.includes('.') ? '.' + file.name.split('.').pop() : '')
+    const nextName = `${prefix.trim()}-${String(index + 1).padStart(3, '0')}${suffix}`
+    const nextPath = parent === '/' ? `/${nextName}` : `${parent}/${nextName}`
+    return moveFile(selectedMountId(file), file.path, nextPath, 'rename')
+  }))
+  const failed = results.filter((result) => result.status === 'rejected').length
+  finishBatchMessage('重命名', targets.length - failed, failed)
+  if (failed) {
+    batchResultRows.value = results.map((result, index) => ({
+      path: targets[index].path,
+      message: result.status === 'rejected' ? (result.reason?.response?.data?.detail || '失败') : '成功',
+      success: result.status === 'fulfilled',
+    })).filter((row) => !row.success)
+    showBatchResultDialog.value = true
   }
-  finishBatchMessage('分享', links.length, results.length - links.length + skipped)
+  resetBatchAfterChange()
+}
+
+async function handleBatchShare() {
+  if (!selectedFiles.value.length) return ElMessage.warning('请选择要分享的项目')
+  openShareDialog(selectedFiles.value)
+}
+
+function resetShareOptions() {
+  shareOptions.value = {
+    expires_hours: 0,
+    max_views: 0,
+    access_code: '',
+  }
+}
+
+function openShareDialog(targets) {
+  shareTargets.value = targets.filter((file) => file)
+  if (!shareTargets.value.length) {
+    ElMessage.warning('没有可分享项目')
+    return
+  }
+  resetShareOptions()
+  showShareDialog.value = true
+}
+
+function normalizedShareOptions() {
+  return {
+    expires_hours: Number(shareOptions.value.expires_hours) || 0,
+    max_views: Number(shareOptions.value.max_views) || 0,
+    access_code: shareOptions.value.access_code.trim(),
+  }
+}
+
+async function submitShareDialog() {
+  if (!shareTargets.value.length) return
+  shareSubmitting.value = true
+  try {
+    const options = normalizedShareOptions()
+    const results = await Promise.allSettled(
+      shareTargets.value.map((file) => createShareLink(selectedMountId(file), file.path, options))
+    )
+    const links = results
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => `${location.origin}/share/${result.value.token}`)
+    if (links.length) {
+      await navigator.clipboard.writeText(links.join('\n'))
+      if (shareExportList.value) {
+        const blob = new Blob([links.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'mounthub-share-links.txt'
+        a.click()
+        URL.revokeObjectURL(url)
+      }
+    }
+    finishBatchMessage('分享', links.length, results.length - links.length)
+    showShareDialog.value = false
+  } finally {
+    shareSubmitting.value = false
+  }
 }
 
 async function handleBatchDelete() {
@@ -841,14 +1060,18 @@ async function handleContextAction({ action, file }) {
 
 // 生成分享链接
 async function handleShare(file) {
+  openShareDialog([file])
+}
+
+async function handleDirectoryStats(file) {
   try {
-    const { createShareLink } = await import('@/api/files')
-    const res = await createShareLink(files.currentMountId, file.path)
-    const url = `${location.origin}/share/${res.token}`
-    await navigator.clipboard.writeText(url)
-    ElMessage.success('分享链接已复制到剪贴板')
-  } catch {
-    ElMessage.error('生成分享链接失败')
+    const stats = await getDirectoryStats(selectedMountId(file), file.path)
+    ElMessageBox.alert(
+      `大小: ${formatSize(stats.total_size)}\n文件: ${stats.file_count}\n目录: ${stats.dir_count}`,
+      '目录统计'
+    )
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '统计失败')
   }
 }
 
@@ -914,6 +1137,7 @@ onBeforeUnmount(() => {
   border-radius: 8px; color: var(--text-regular); font-size: 13px;
 }
 .batch-actions { display: flex; align-items: center; gap: 8px; }
+.field-hint { margin-left: 10px; color: var(--text-secondary); font-size: 12px; }
 .file-content-wrapper { flex: 1; display: flex; gap: 12px; min-height: 0; }
 .file-content {
   flex: 1; padding: 16px; background: var(--card-bg); border-radius: 8px;

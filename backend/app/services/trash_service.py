@@ -1,8 +1,8 @@
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestException, NotFoundException
@@ -77,6 +77,33 @@ async def list_trash_items(db: AsyncSession, mount_ids: set[int] | None = None) 
     return list(result.scalars().all())
 
 
+async def trash_stats(db: AsyncSession, mount_ids: set[int] | None = None) -> list[dict]:
+    query = (
+        select(
+            TrashItem.mount_id,
+            func.count(TrashItem.id),
+            func.coalesce(func.sum(TrashItem.size), 0),
+            func.min(TrashItem.deleted_at),
+        )
+        .group_by(TrashItem.mount_id)
+        .order_by(TrashItem.mount_id)
+    )
+    if mount_ids is not None:
+        if not mount_ids:
+            return []
+        query = query.where(TrashItem.mount_id.in_(mount_ids))
+    rows = (await db.execute(query)).all()
+    return [
+        {
+            "mount_id": mount_id,
+            "item_count": item_count,
+            "total_size": total_size,
+            "oldest_deleted_at": oldest_deleted_at,
+        }
+        for mount_id, item_count, total_size, oldest_deleted_at in rows
+    ]
+
+
 async def get_trash_item(db: AsyncSession, item_id: int) -> TrashItem:
     result = await db.execute(select(TrashItem).where(TrashItem.id == item_id))
     item = result.scalar_one_or_none()
@@ -124,3 +151,61 @@ async def purge_trash_item(db: AsyncSession, item_id: int) -> TrashItem:
     await db.delete(item)
     await db.flush()
     return item
+
+
+async def purge_many(db: AsyncSession, items: list[TrashItem]) -> dict:
+    success_count = 0
+    failed: list[dict] = []
+    for item in items:
+        try:
+            await purge_trash_item(db, item.id)
+            success_count += 1
+        except Exception as exc:
+            failed.append({"id": item.id, "name": item.name, "message": getattr(exc, "detail", str(exc))})
+    return {"success_count": success_count, "failed_count": len(failed), "failed": failed}
+
+
+async def clear_trash(
+    db: AsyncSession,
+    mount_ids: set[int] | None = None,
+    item_ids: list[int] | None = None,
+) -> dict:
+    query = select(TrashItem)
+    if mount_ids is not None:
+        if not mount_ids:
+            return {"success_count": 0, "failed_count": 0, "failed": []}
+        query = query.where(TrashItem.mount_id.in_(mount_ids))
+    if item_ids is not None:
+        if not item_ids:
+            return {"success_count": 0, "failed_count": 0, "failed": []}
+        query = query.where(TrashItem.id.in_(item_ids))
+    items = list((await db.execute(query)).scalars().all())
+    return await purge_many(db, items)
+
+
+async def cleanup_trash(
+    db: AsyncSession,
+    mount_ids: set[int] | None = None,
+    retention_days: int = 0,
+    max_total_size: int = 0,
+) -> dict:
+    query = select(TrashItem)
+    if mount_ids is not None:
+        if not mount_ids:
+            return {"success_count": 0, "failed_count": 0, "failed": []}
+        query = query.where(TrashItem.mount_id.in_(mount_ids))
+    items = list((await db.execute(query.order_by(TrashItem.deleted_at.asc()))).scalars().all())
+    targets: list[TrashItem] = []
+    now = datetime.now(timezone.utc)
+    if retention_days > 0:
+        cutoff = now - timedelta(days=retention_days)
+        targets.extend([item for item in items if item.deleted_at and item.deleted_at < cutoff])
+    if max_total_size > 0:
+        remaining = [item for item in items if item not in targets]
+        total = sum(item.size or 0 for item in remaining)
+        for item in remaining:
+            if total <= max_total_size:
+                break
+            targets.append(item)
+            total -= item.size or 0
+    return await purge_many(db, targets)

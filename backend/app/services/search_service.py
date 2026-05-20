@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.adapters.base import FileInfo
 from app.models.mount import Mount
 from app.models.user import User
+from app.services.trash_service import is_trash_path
 from app.services.mount_permission_service import get_accessible_mount_ids
 from app.services.mount_service import get_adapter_for_mount
 
@@ -110,6 +111,8 @@ async def _recursive_search(
     for item in items:
         if len(results) >= limit:
             break
+        if is_trash_path(item.path):
+            continue
 
         if matches(item.name):
             results.append({

@@ -15,6 +15,14 @@ export const getFileInfo = (mountId, path) =>
 export const downloadFile = (mountId, path) =>
   request.get(`/files/${mountId}/download`, { params: { path }, responseType: 'blob' })
 
+/** 批量 ZIP 下载 */
+export const batchDownloadZip = (items) =>
+  request.post('/files/batch-download', { items }, { responseType: 'blob' })
+
+/** 目录递归统计 */
+export const getDirectoryStats = (mountId, path) =>
+  request.get(`/files/${mountId}/stats`, { params: { path } })
+
 /** 上传文件 (FormData) */
 export const uploadFile = (mountId, path, formData, conflictPolicy = 'error') =>
   uploadService.post(`/files/${mountId}/upload`, formData, {
@@ -62,5 +70,5 @@ export const batchFileOperation = (mountId, data) =>
   request.post(`/files/${mountId}/batch`, data)
 
 /** 生成分享链接 (委托给 shares API) */
-export const createShareLink = (mountId, path) =>
-  request.post('/shares', { mount_id: mountId, file_path: path })
+export const createShareLink = (mountId, path, options = {}) =>
+  request.post('/shares', { mount_id: mountId, file_path: path, ...options })

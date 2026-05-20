@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 from wsgidav import dav_provider, util
 from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_INTERNAL_ERROR
 
+from app.services.trash_service import is_trash_path
+
 if TYPE_CHECKING:
     from app.adapters.base import BaseAdapter, FileInfo
 
@@ -50,9 +52,15 @@ class _AdapterMixin:
         """延迟加载文件元数据"""
         if self._info is None:
             try:
-                self._info = _run_async(self._adapter.get_info(self._path))
+                self._info = _run_async(self._adapter.get_info(self._adapter_path()))
             except Exception:
                 self._info = None
+
+    def _adapter_path(self, path: str | None = None) -> str:
+        """将 WebDAV 路径 (/挂载名/子路径) 转成适配器路径 (/子路径)。"""
+        resource_path = path if path is not None else self.path
+        parts = resource_path.strip("/").split("/", 1)
+        return "/" + parts[1] if len(parts) > 1 else "/"
 
 
 class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
@@ -69,16 +77,20 @@ class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
     def get_member_names(self) -> list[str]:
         """列出目录下的成员名称"""
         try:
-            entries = _run_async(self._adapter.list_dir(self.path))
-            return [e.name for e in entries]
+            entries = _run_async(self._adapter.list_dir(self._adapter_path()))
+            return [e.name for e in entries if not is_trash_path(e.path)]
         except Exception as e:
             raise DAVError(HTTP_INTERNAL_ERROR, str(e))
 
     def get_member(self, name: str) -> dav_provider._DAVResource:
         """获取子资源 (文件或目录)"""
         child_path = util.join_uri(self.path, name)
+        parts = child_path.strip("/").split("/", 1)
+        adapter_path = "/" + parts[1] if len(parts) > 1 else "/"
+        if is_trash_path(adapter_path):
+            raise DAVError(HTTP_NOT_FOUND, f"资源不存在: {child_path}")
         try:
-            info = _run_async(self._adapter.get_info(child_path))
+            info = _run_async(self._adapter.get_info(adapter_path))
             if info.is_dir:
                 return AdapterCollection(child_path, self.environ, self._adapter, info)
             else:
@@ -90,14 +102,14 @@ class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
         """创建子目录"""
         dir_path = util.join_uri(self.path, name)
         try:
-            _run_async(self._adapter.mkdir(dir_path))
+            _run_async(self._adapter.mkdir(self._adapter_path(dir_path)))
         except Exception as e:
             raise DAVError(HTTP_INTERNAL_ERROR, f"创建目录失败: {e}")
 
     def delete(self):
         """删除目录"""
         try:
-            _run_async(self._adapter.delete(self.path))
+            _run_async(self._adapter.delete(self._adapter_path()))
         except Exception as e:
             raise DAVError(HTTP_INTERNAL_ERROR, f"删除失败: {e}")
 
@@ -105,9 +117,9 @@ class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
         """复制或移动目录"""
         try:
             if is_move:
-                _run_async(self._adapter.move(self.path, dest_path))
+                _run_async(self._adapter.move(self._adapter_path(), self._adapter_path(dest_path)))
             else:
-                _run_async(self._adapter.copy(self.path, dest_path))
+                _run_async(self._adapter.copy(self._adapter_path(), self._adapter_path(dest_path)))
         except Exception as e:
             raise DAVError(HTTP_INTERNAL_ERROR, f"{'移动' if is_move else '复制'}失败: {e}")
 
@@ -154,7 +166,7 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
         chunks = []
 
         async def _collect():
-            async for chunk in self._adapter.download(self.path):
+            async for chunk in self._adapter.download(self._adapter_path()):
                 chunks.append(chunk)
 
         try:
@@ -166,12 +178,12 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
 
     def begin_write(self, content_type: str = None):
         """开始写入 (用于 PUT 请求)"""
-        return _WriteBuffer(self._adapter, self.path)
+        return _WriteBuffer(self._adapter, self._adapter_path())
 
     def delete(self):
         """删除文件"""
         try:
-            _run_async(self._adapter.delete(self.path))
+            _run_async(self._adapter.delete(self._adapter_path()))
         except Exception as e:
             raise DAVError(HTTP_INTERNAL_ERROR, f"删除失败: {e}")
 
@@ -179,9 +191,9 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
         """复制或移动文件"""
         try:
             if is_move:
-                _run_async(self._adapter.move(self.path, dest_path))
+                _run_async(self._adapter.move(self._adapter_path(), self._adapter_path(dest_path)))
             else:
-                _run_async(self._adapter.copy(self.path, dest_path))
+                _run_async(self._adapter.copy(self._adapter_path(), self._adapter_path(dest_path)))
         except Exception as e:
             raise DAVError(HTTP_INTERNAL_ERROR, f"{'移动' if is_move else '复制'}失败: {e}")
 
@@ -243,6 +255,8 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
 
         mount_name = parts[0]
         sub_path = "/" + parts[1] if len(parts) > 1 else "/"
+        if is_trash_path(sub_path):
+            return None
 
         adapter = self._adapters.get(mount_name)
         if adapter is None:

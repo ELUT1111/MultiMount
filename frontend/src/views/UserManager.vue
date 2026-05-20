@@ -4,8 +4,18 @@
 -->
 <template>
   <div class="user-manager">
-    <h2>用户与权限管理</h2>
-    <el-tabs v-model="activeTab">
+    <div class="page-header">
+      <div class="header-copy">
+        <h2>用户与权限管理</h2>
+        <div class="header-meta">
+          <span>{{ users.length }} 个用户</span>
+          <span>{{ activeUserCount }} 个启用</span>
+          <span>{{ roles.length }} 个角色</span>
+        </div>
+      </div>
+    </div>
+
+    <el-tabs v-model="activeTab" class="manager-tabs">
       <!-- 用户管理 -->
       <el-tab-pane label="用户管理" name="users">
         <UserTable :users="users" :roles="roles" :loading="loading"
@@ -19,14 +29,17 @@
           <div class="role-list">
             <div class="role-list-header">
               <span>角色列表</span>
-              <el-button type="primary" size="small" :icon="Plus" @click="handleNewRole">新建角色</el-button>
+              <el-button type="primary" size="small" :icon="Plus" @click="handleNewRole">新建</el-button>
             </div>
             <div v-for="role in roles" :key="role.id" class="role-item"
               :class="{ active: selectedRole?.id === role.id }"
               @click="selectedRole = role">
-              <span>{{ role.name }}</span>
-              <el-tag size="small">{{ role.description || '无描述' }}</el-tag>
+              <div class="role-copy">
+                <span class="role-name">{{ role.name }}</span>
+                <span class="role-desc">{{ role.description || '无描述' }}</span>
+              </div>
             </div>
+            <el-empty v-if="roles.length === 0" description="暂无角色" :image-size="48" />
           </div>
           <div class="role-detail">
             <RolePermission :role="selectedRole" :mounts="mounts.mounts"
@@ -42,7 +55,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listUsers, createUser, deleteUser, updateUser, listRoles, updateRole, createRole } from '@/api/users'
@@ -59,6 +72,8 @@ const loading = ref(false)
 const selectedRole = ref(null)
 const showUserDialog = ref(false)
 const editUser = ref(null)
+
+const activeUserCount = computed(() => users.value.filter((user) => user.is_active).length)
 
 async function fetchUsers() {
   loading.value = true
@@ -156,17 +171,137 @@ onMounted(() => { fetchUsers(); fetchRoles(); mounts.fetchMounts() })
 </script>
 
 <style scoped>
-.user-manager { display: flex; flex-direction: column; gap: 16px; }
-.user-manager h2 { font-size: 20px; }
-.roles-layout { display: flex; gap: 24px; min-height: 400px; }
-.role-list { width: 220px; display: flex; flex-direction: column; gap: 4px; }
-.role-list-header { display: flex; justify-content: space-between; align-items: center; padding: 4px 0 8px; font-weight: 600; font-size: 14px; }
-.role-item {
-  padding: 10px 12px; border-radius: 8px; cursor: pointer;
-  display: flex; justify-content: space-between; align-items: center;
-  transition: background 0.2s;
+.user-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
-.role-item:hover { background: rgba(64,158,255,0.08); }
-.role-item.active { background: rgba(64,158,255,0.12); color: var(--primary-color); }
-.role-detail { flex: 1; background: var(--card-bg); border-radius: 8px; overflow-y: auto; }
+.page-header {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr);
+  gap: 16px;
+}
+.header-copy {
+  min-width: 0;
+}
+.page-header h2 {
+  margin-bottom: 8px;
+  font-size: 22px;
+  line-height: 1.25;
+}
+.header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.header-meta span {
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--card-bg);
+  padding: 3px 10px;
+}
+.manager-tabs {
+  min-width: 0;
+}
+.roles-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 480px;
+}
+.role-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+.role-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+  font-weight: 700;
+  font-size: 14px;
+}
+.role-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.role-item:hover {
+  background: rgba(64, 158, 255, 0.06);
+}
+.role-item.active {
+  border-color: rgba(64, 158, 255, 0.32);
+  background: rgba(64, 158, 255, 0.1);
+  color: var(--primary-color);
+}
+.role-copy {
+  min-width: 0;
+}
+.role-name {
+  display: block;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.role-item.active .role-name {
+  color: var(--primary-color);
+}
+.role-desc {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.role-detail {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+
+@media (max-width: 1024px) {
+  .roles-layout {
+    grid-template-columns: 1fr;
+  }
+  .role-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    align-items: stretch;
+  }
+  .role-list-header {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .user-manager {
+    gap: 14px;
+  }
+  .page-header h2 {
+    font-size: 20px;
+  }
+  .role-list {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

@@ -52,6 +52,22 @@ class BatchFileResponse(BaseModel):
     failed_count: int
 
 
+class BatchDownloadItem(BaseModel):
+    mount_id: int
+    path: str = Field(..., min_length=1)
+
+
+class BatchDownloadRequest(BaseModel):
+    items: list[BatchDownloadItem] = Field(..., min_length=1, max_length=200)
+
+
+class DirectoryStatsOut(BaseModel):
+    path: str
+    total_size: int
+    file_count: int
+    dir_count: int
+
+
 class TrashItemOut(BaseModel):
     id: int
     mount_id: int

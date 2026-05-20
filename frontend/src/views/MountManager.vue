@@ -4,7 +4,13 @@
 <template>
   <div class="mount-manager">
     <div class="page-header">
-      <h2>挂载管理</h2>
+      <div class="header-copy">
+        <h2>挂载管理</h2>
+        <div class="header-meta">
+          <span>{{ filteredMounts.length }} / {{ mounts.mounts.length }} 个挂载</span>
+          <span>{{ onlineMountCount }} 个在线</span>
+        </div>
+      </div>
       <div class="header-actions responsive-filters">
         <el-select v-model="filterType" placeholder="按类型筛选" clearable size="default">
           <el-option v-for="t in mountTypes" :key="t.value" :label="t.label" :value="t.value" />
@@ -19,50 +25,75 @@
     </div>
 
     <div v-loading="mounts.loading" class="mount-grid">
-      <el-empty v-if="!mounts.loading && filteredMounts.length === 0" description="暂无挂载点" />
+      <el-empty v-if="!mounts.loading && filteredMounts.length === 0" class="mount-empty" description="暂无挂载点" />
 
       <div v-for="mount in filteredMounts" :key="mount.id" class="mount-card">
-        <div class="card-header">
+        <div class="mount-card-top">
           <div class="card-left">
-            <el-icon :size="28" color="#409eff"><component :is="typeIcon(mount.type)" /></el-icon>
-            <div>
+            <div class="mount-icon">
+              <el-icon :size="24"><component :is="typeIcon(mount.type)" /></el-icon>
+            </div>
+            <div class="mount-title-block">
               <div class="mount-name">{{ mount.name }}</div>
               <div class="mount-type">{{ typeLabel(mount.type) }}</div>
             </div>
           </div>
-          <div class="card-right">
+          <div class="mount-badges">
             <el-tag v-if="mount.my_level" :type="levelTagType(mount.my_level)" size="small" effect="plain">
               {{ levelLabel(mount.my_level) }}
             </el-tag>
-            <span class="status-dot" :class="mount.status" :title="statusLabel(mount.status)" />
+            <el-tag :type="statusTagType(mount.status)" size="small" effect="plain" class="status-tag">
+              <span class="status-dot" :class="mount.status" />
+              {{ statusLabel(mount.status) }}
+            </el-tag>
           </div>
         </div>
         <div class="card-body">
-          <div class="info-row"><span>地址:</span> <span>{{ mount.config.host || mount.config.url || mount.config.path || '-' }}{{ mount.config.port ? ':' + mount.config.port : '' }}</span></div>
-          <div class="info-row"><span>路径:</span> <span>{{ mount.config.path || mount.config.prefix || '/' }}</span></div>
-          <div class="info-row" v-if="mount.owner_name"><span>创建者:</span> <span>{{ mount.owner_name }}</span></div>
-          <div class="info-row" v-if="mount.capacity_total"><span>容量:</span> <span>{{ formatSize(mount.capacity_used) }} / {{ formatSize(mount.capacity_total) }}</span></div>
-          <div class="info-row" v-if="mount.last_connected_at"><span>最后连接:</span> <span>{{ formatTime(mount.last_connected_at) }}</span></div>
+          <div class="mount-meta-grid">
+            <div class="info-row">
+              <span>地址</span>
+              <strong :title="mountEndpoint(mount)">{{ mountEndpoint(mount) }}</strong>
+            </div>
+            <div class="info-row">
+              <span>路径</span>
+              <strong :title="mountPath(mount)">{{ mountPath(mount) }}</strong>
+            </div>
+            <div class="info-row" v-if="mount.owner_name">
+              <span>创建者</span>
+              <strong>{{ mount.owner_name }}</strong>
+            </div>
+            <div class="info-row" v-if="mount.last_connected_at">
+              <span>最后连接</span>
+              <strong>{{ formatTime(mount.last_connected_at) }}</strong>
+            </div>
+          </div>
+          <div class="capacity-meter" v-if="mount.capacity_total">
+            <div class="capacity-copy">
+              <span>容量</span>
+              <strong>{{ formatSize(mount.capacity_used) }} / {{ formatSize(mount.capacity_total) }}</strong>
+            </div>
+            <el-progress :percentage="capacityPercent(mount)" :stroke-width="6" :show-text="false" />
+          </div>
         </div>
         <div class="card-footer">
           <el-button
             size="small"
             class="card-action action-test"
+            :icon="Refresh"
             @click="handleTest(mount)"
             :loading="testingId === mount.id"
             v-if="canTest(mount)"
           >
-            <span class="test-indicator" :class="testIndicatorClass(mount)" />
             测试连接
           </el-button>
-          <el-button size="small" class="card-action action-edit" @click="handleEdit(mount)" v-if="canEdit(mount)">编辑</el-button>
-          <el-button size="small" class="card-action action-request" @click="openRequestDialog(mount)" v-if="mount.my_level === 'none'">申请权限</el-button>
+          <el-button size="small" class="card-action action-edit" :icon="Edit" @click="handleEdit(mount)" v-if="canEdit(mount)">编辑</el-button>
+          <el-button size="small" class="card-action action-request" :icon="Key" @click="openRequestDialog(mount)" v-if="mount.my_level === 'none'">申请权限</el-button>
           <el-dropdown v-if="canEdit(mount) || canManagePerms(mount)" trigger="click">
-            <el-button size="small" class="card-action action-more">更多</el-button>
+            <el-button size="small" class="card-action action-more" :icon="MoreFilled">更多</el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item v-if="canManagePerms(mount)" @click="openPermDialog(mount)">权限管理</el-dropdown-item>
-                <el-dropdown-item v-if="canEdit(mount)" class="danger-action" divided @click="handleDelete(mount)">删除挂载</el-dropdown-item>
+                <el-dropdown-item v-if="canManagePerms(mount)" :icon="Key" @click="openPermDialog(mount)">权限管理</el-dropdown-item>
+                <el-dropdown-item v-if="canEdit(mount)" :icon="Delete" class="danger-action" divided @click="handleDelete(mount)">删除挂载</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -220,7 +251,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Plus, Refresh, FolderOpened, Connection, Monitor, Cloudy } from '@element-plus/icons-vue'
+import { Plus, Refresh, FolderOpened, Connection, Monitor, Cloudy, Edit, Delete, Key, MoreFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useMountsStore } from '@/stores/mounts'
 import { useAuthStore } from '@/stores/auth'
@@ -291,11 +322,31 @@ const filteredMounts = computed(() => {
   })
 })
 
+const onlineMountCount = computed(() => mounts.mounts.filter((m) => m.status === 'online').length)
+
 const typeIcon = (t) => ({ local: FolderOpened, ftp: Connection, sftp: Connection, webdav: Monitor, oss: Cloudy, s3: Cloudy }[t] || Connection)
 const typeLabel = (t) => ({ local: '本地存储', ftp: 'FTP', sftp: 'SFTP', webdav: 'WebDAV', oss: '阿里云 OSS', s3: 'Amazon S3' }[t] || t)
 const statusLabel = (s) => ({ online: '在线', offline: '离线', connecting: '连接中' }[s] || s)
+const statusTagType = (s) => ({ online: 'success', offline: 'danger', connecting: 'warning' }[s] || 'info')
 const levelLabel = (l) => ({ read: '只读', readwrite: '读写', none: '无权限' }[l] || l)
 const levelTagType = (l) => ({ read: 'info', readwrite: 'success', none: 'danger' }[l] || 'info')
+
+function mountEndpoint(mount) {
+  const cfg = mount.config || {}
+  const base = cfg.host || cfg.url || cfg.path || cfg.bucket || '-'
+  return cfg.port ? `${base}:${cfg.port}` : base
+}
+
+function mountPath(mount) {
+  const cfg = mount.config || {}
+  return cfg.path || cfg.prefix || cfg.endpoint || cfg.endpoint_url || '/'
+}
+
+function capacityPercent(mount) {
+  const total = Number(mount.capacity_total) || 0
+  if (!total) return 0
+  return Math.min(100, Math.round(((Number(mount.capacity_used) || 0) / total) * 100))
+}
 
 // 权限判断
 function isOwner(mount) {
@@ -571,160 +622,536 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.mount-manager { display: flex; flex-direction: column; gap: 16px; }
-.page-header { display: flex; justify-content: space-between; align-items: center; }
-.page-header h2 { font-size: 20px; }
-.header-actions { gap: 8px; align-items: center; }
-.header-actions.responsive-filters { display: grid; }
-.mount-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
-.mount-card {
-  background: var(--card-bg); border-radius: 12px; padding: 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: box-shadow 0.2s;
+.mount-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
-.mount-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-.card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
-.card-left { display: flex; gap: 12px; align-items: center; }
-.card-right { display: flex; align-items: center; gap: 8px; }
-.mount-name { font-weight: 600; font-size: 15px; }
-.mount-type { font-size: 12px; color: var(--text-secondary); }
-/* 彩色状态指示灯 */
-.status-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
-.status-dot.online { background: var(--success-color); box-shadow: 0 0 6px rgba(103,194,58,0.4); }
-.status-dot.offline { background: var(--danger-color); box-shadow: 0 0 6px rgba(245,108,108,0.4); }
-.status-dot.connecting { background: var(--warning-color); box-shadow: 0 0 6px rgba(230,162,60,0.4); animation: pulse 1.5s infinite; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-.card-body { margin-bottom: 12px; }
-.info-row { font-size: 13px; color: var(--text-regular); padding: 4px 0; display: flex; gap: 8px; }
-.info-row span:first-child { color: var(--text-secondary); min-width: 70px; }
+
+.page-header {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(520px, 760px);
+  gap: 16px;
+  align-items: end;
+}
+
+.header-copy {
+  min-width: 0;
+}
+
+.page-header h2 {
+  font-size: 22px;
+  line-height: 1.25;
+  margin-bottom: 8px;
+}
+
+.header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.header-meta span {
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--card-bg);
+  padding: 3px 10px;
+}
+
+.header-actions.responsive-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(132px, 1fr));
+  gap: 10px;
+  align-items: center;
+}
+
+.header-actions :deep(.el-select),
+.header-actions :deep(.el-button) {
+  width: 100%;
+  min-width: 0;
+}
+
+.mount-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.mount-empty {
+  grid-column: 1 / -1;
+  min-height: 280px;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+
+.mount-card {
+  display: flex;
+  min-width: 0;
+  min-height: 292px;
+  flex-direction: column;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.mount-card:hover {
+  border-color: rgba(64, 158, 255, 0.45);
+  box-shadow: 0 8px 22px rgba(31, 45, 61, 0.08);
+  transform: translateY(-1px);
+}
+
+.mount-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.card-left {
+  display: flex;
+  min-width: 0;
+  gap: 12px;
+  align-items: center;
+}
+
+.mount-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border: 1px solid rgba(64, 158, 255, 0.22);
+  border-radius: 8px;
+  color: var(--primary-color);
+  background: rgba(64, 158, 255, 0.08);
+}
+
+.mount-title-block {
+  min-width: 0;
+}
+
+.mount-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mount-type {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mount-badges {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 156px;
+}
+
+.status-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.online {
+  background: var(--success-color);
+}
+
+.status-dot.offline {
+  background: var(--danger-color);
+}
+
+.status-dot.connecting {
+  background: var(--warning-color);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.card-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 0;
+}
+
+.mount-meta-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.info-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  color: var(--text-regular);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.info-row span {
+  color: var(--text-secondary);
+}
+
+.info-row strong {
+  overflow: hidden;
+  color: var(--text-regular);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capacity-meter {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg-color);
+}
+
+.capacity-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.capacity-copy strong {
+  overflow: hidden;
+  color: var(--text-regular);
+  font-weight: 600;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .card-footer {
   display: flex;
   gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
   border-top: 1px solid var(--border-color);
   padding-top: 14px;
   flex-wrap: wrap;
 }
+
 .card-footer :deep(.el-button + .el-button) {
   margin-left: 0;
 }
+
 .card-action {
-  height: 30px;
-  border: 1px solid var(--border-color);
+  height: 32px;
   border-radius: 8px;
   font-weight: 600;
   letter-spacing: 0;
-  box-shadow: none;
-  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
-.card-action:hover {
-  border-color: currentColor;
-}
-.card-action:active {
-  transform: translateY(0);
-}
+
 .action-test {
   color: var(--success-color);
   background: rgba(103, 194, 58, 0.08);
+  border-color: rgba(103, 194, 58, 0.28);
 }
+
 .action-edit {
   color: var(--primary-color);
   background: rgba(64, 158, 255, 0.08);
+  border-color: rgba(64, 158, 255, 0.28);
 }
+
 .action-request {
   color: var(--warning-color);
   background: rgba(230, 162, 60, 0.1);
+  border-color: rgba(230, 162, 60, 0.32);
 }
+
 .action-more {
   color: var(--text-regular);
   background: var(--bg-color);
+  border-color: var(--border-color);
 }
-.test-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: inline-block;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-.test-indicator.is-success {
-  background: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34,197,94,0.16), 0 0 10px rgba(34,197,94,0.55);
-}
-.test-indicator.is-failed {
-  background: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239,68,68,0.14), 0 0 10px rgba(239,68,68,0.45);
-}
-.type-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.type-card {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 20px; border: 2px solid var(--border-color); border-radius: 12px;
-  cursor: pointer; transition: all 0.2s;
-}
-.type-card:hover { border-color: var(--primary-color); background: rgba(64,158,255,0.04); }
-.type-card.selected { border-color: var(--primary-color); background: rgba(64,158,255,0.08); }
 
-/* 权限管理对话框 */
-.perm-header { margin-bottom: 16px; font-size: 14px; }
-.perm-section { margin-bottom: 8px; }
-.perm-section-title { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
-.perm-list { display: flex; flex-direction: column; gap: 8px; }
-.perm-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--bg-color); border-radius: 8px; }
-.perm-user { display: flex; align-items: center; gap: 8px; }
-.perm-username { font-size: 14px; }
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.type-card {
+  display: flex;
+  min-height: 112px;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.type-card span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text-regular);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.type-card:hover {
+  border-color: var(--primary-color);
+  background: rgba(64, 158, 255, 0.04);
+}
+
+.type-card.selected {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: rgba(64, 158, 255, 0.08);
+}
+
+.type-card.selected span {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+:deep(.mount-dialog .el-steps) {
+  margin-bottom: 22px !important;
+}
+
+:deep(.mount-dialog .el-form),
+:deep(.request-dialog .el-form) {
+  max-width: 100%;
+}
+
+:deep(.mount-dialog .el-input-number) {
+  width: 180px;
+}
+
+.perm-header {
+  margin-bottom: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-color);
+  padding: 10px 12px;
+  color: var(--text-regular);
+  font-size: 14px;
+}
+
+.perm-section {
+  margin-bottom: 8px;
+}
+
+.perm-section-title {
+  margin-bottom: 10px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.perm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.perm-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+}
+
+.perm-user {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.perm-username {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.perm-dialog .el-form--inline) {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 140px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+:deep(.perm-dialog .el-form--inline .el-form-item) {
+  margin-right: 0;
+  margin-bottom: 0;
+}
+
+:deep(.perm-dialog .el-select),
+:deep(.perm-dialog .el-button) {
+  width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .page-header {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .header-actions.responsive-filters {
+    width: 100%;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+  }
+}
 
 @media (max-width: 768px) {
+  .mount-manager {
+    gap: 14px;
+  }
+
   .page-header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
-  .header-actions {
-    width: 100%;
-    grid-template-columns: 1fr 1fr;
+
+  .page-header h2 {
+    font-size: 20px;
   }
-  .header-actions :deep(.el-select),
-  .header-actions :deep(.el-button) {
-    width: 100%;
+
+  .header-actions.responsive-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
   .mount-grid {
     grid-template-columns: 1fr;
     gap: 12px;
   }
+
   .mount-card {
+    min-height: 0;
     padding: 14px;
-    border-radius: 8px;
   }
-  .card-header {
+
+  .mount-card-top {
     gap: 10px;
   }
-  .card-left {
-    min-width: 0;
+
+  .mount-badges {
+    max-width: 132px;
   }
-  .mount-name,
-  .mount-type,
-  .info-row span:last-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+
+  .info-row {
+    grid-template-columns: 64px minmax(0, 1fr);
   }
-  .card-right {
-    flex-shrink: 0;
-  }
+
   .card-footer {
-    justify-content: flex-end;
+    justify-content: stretch;
   }
+
+  .card-footer > :deep(.el-button),
+  .card-footer > :deep(.el-dropdown) {
+    flex: 1 1 calc(50% - 4px);
+  }
+
+  .card-footer :deep(.el-dropdown .el-button) {
+    width: 100%;
+  }
+
   .type-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
   .type-card {
-    padding: 16px 8px;
+    min-height: 96px;
+    padding: 14px 8px;
   }
-  :deep(.el-form-item) {
+
+  :deep(.mount-dialog .el-form-item),
+  :deep(.request-dialog .el-form-item) {
     display: block;
   }
-  :deep(.el-form-item__label) {
+
+  :deep(.mount-dialog .el-form-item__label),
+  :deep(.request-dialog .el-form-item__label) {
     justify-content: flex-start;
     margin-bottom: 4px;
+  }
+
+  :deep(.mount-dialog .el-input-number) {
+    width: 100%;
+  }
+
+  :deep(.perm-dialog .el-form--inline) {
+    grid-template-columns: 1fr;
+  }
+
+  .perm-item {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .header-actions.responsive-filters,
+  .type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mount-card-top {
+    flex-direction: column;
+  }
+
+  .mount-badges {
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+
+  .card-footer > :deep(.el-button),
+  .card-footer > :deep(.el-dropdown) {
+    flex-basis: 100%;
   }
 }
 </style>

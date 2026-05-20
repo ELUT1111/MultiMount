@@ -2,12 +2,16 @@
 分享链接 API — 创建、查询、访问、删除分享链接。
 """
 from datetime import datetime
+import os
+import tempfile
+import zipfile
 
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -28,6 +32,25 @@ class ShareLinkCreate(BaseModel):
     access_code: str = ""
 
 
+class ShareLinkUpdate(BaseModel):
+    expires_hours: int | None = Field(None, ge=0, le=8760)
+    max_views: int | None = Field(None, ge=0)
+    access_code: str | None = None
+    is_active: bool | None = None
+
+
+class ShareBatchRequest(BaseModel):
+    action: str = Field(..., pattern="^(deactivate|delete)$")
+    ids: list[int] = Field(..., min_length=1, max_length=200)
+
+
+class SharePolicyUpdate(BaseModel):
+    enabled: bool = True
+    force_access_code: bool = False
+    default_expires_hours: int = Field(0, ge=0, le=8760)
+    max_access_per_hour: int = Field(0, ge=0)
+
+
 class ShareLinkOut(BaseModel):
     id: int
     mount_id: int
@@ -40,6 +63,7 @@ class ShareLinkOut(BaseModel):
     is_active: bool
     access_code: str | None
     created_at: datetime
+    is_dir: bool | None = None
 
     model_config = {"from_attributes": True}
 
@@ -106,6 +130,39 @@ async def list_all_links(
     return await share_service.list_all_links(db)
 
 
+@router.get("/policy")
+async def get_share_policy(_admin=Depends(require_admin)):
+    return share_service.get_share_policy()
+
+
+@router.put("/policy")
+async def update_share_policy(body: SharePolicyUpdate, _admin=Depends(require_admin)):
+    return share_service.update_share_policy(body.model_dump())
+
+
+@router.post("/batch")
+async def batch_share_links(
+    request: Request,
+    body: ShareBatchRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    is_admin = current_user.role and current_user.role.name == "admin"
+    result = await share_service.batch_update_links(db, body.ids, current_user.id, is_admin, body.action)
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action=f"share_batch_{body.action}",
+        resource_type="share",
+        user=current_user,
+        status="success" if result["failed_count"] == 0 else "partial_failed",
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={**result, "ids": body.ids},
+    )
+    return result
+
+
 # ── 访问分享链接 (无需登录) ────────────────────────────────
 
 @router.get("/{token}/info")
@@ -127,6 +184,7 @@ async def get_link_info(token: str, db: AsyncSession = Depends(get_db)):
         "expires_at": link.expires_at,
         "view_count": link.view_count,
         "max_views": link.max_views,
+        "is_dir": (await file_service.get_info(db, link.mount_id, link.file_path)).is_dir,
     }
 
 
@@ -157,6 +215,47 @@ async def access_link(
     }
 
 
+@router.get("/{token}/list")
+async def list_shared_dir(
+    request: Request,
+    token: str,
+    path: str = Query("/", description="分享目录内的相对路径"),
+    access_code: str = Query("", description="提取码"),
+    db: AsyncSession = Depends(get_db),
+):
+    """浏览目录分享。"""
+    link = await share_service.validate_and_access(db, token, access_code)
+    root_info = await file_service.get_info(db, link.mount_id, link.file_path)
+    if not root_info.is_dir:
+        from app.core.exceptions import BadRequestException
+        raise BadRequestException("该分享不是目录")
+    relative = path.strip("/")
+    target = link.file_path.rstrip("/") + ("/" + relative if relative else "")
+    items = await file_service.list_dir(db, link.mount_id, target)
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="share_access",
+        resource_type="share",
+        mount_id=link.mount_id,
+        path=target,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"share_id": link.id, "token": token, "dir_list": True},
+    )
+    return [
+        {
+            "name": item.name,
+            "path": item.path.removeprefix(link.file_path.rstrip("/")).lstrip("/") or "/",
+            "is_dir": item.is_dir,
+            "size": item.size,
+            "modified_at": item.modified_at,
+            "mime_type": item.mime_type,
+        }
+        for item in items
+    ]
+
+
 @router.get("/{token}/download")
 async def download_link(
     request: Request,
@@ -167,6 +266,43 @@ async def download_link(
     """通过分享链接匿名下载文件。"""
     link = await share_service.validate_and_access(db, token, access_code)
     info = await file_service.get_info(db, link.mount_id, link.file_path)
+    if info.is_dir:
+        tmp = tempfile.NamedTemporaryFile(prefix="mounthub_share_", suffix=".zip", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        try:
+            with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                async for relative_path, file_info in file_service.iter_files_recursive(
+                    db, link.mount_id, link.file_path, base_name=info.name or "share"
+                ):
+                    if file_info.is_dir:
+                        continue
+                    with zf.open(relative_path, "w") as dest:
+                        async for chunk in file_service.download_file(db, link.mount_id, file_info.path):
+                            dest.write(chunk)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        ip, user_agent = operation_log_service.request_context(request)
+        await operation_log_service.log_operation(
+            db,
+            action="share_download",
+            resource_type="share",
+            mount_id=link.mount_id,
+            path=link.file_path,
+            ip_address=ip,
+            user_agent=user_agent,
+            detail={"share_id": link.id, "token": token, "size": os.path.getsize(tmp_path), "directory": True},
+        )
+        return FileResponse(
+            tmp_path,
+            media_type="application/zip",
+            filename=f"{info.name or 'share'}.zip",
+            background=BackgroundTask(lambda: os.path.exists(tmp_path) and os.unlink(tmp_path)),
+        )
     mime = info.mime_type or "application/octet-stream"
     filename = info.name
 
@@ -195,6 +331,47 @@ async def download_link(
             "Content-Length": str(info.size) if info.size else "",
         },
     )
+
+
+@router.get("/{link_id}/stats")
+async def get_share_stats(
+    link_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    is_admin = current_user.role and current_user.role.name == "admin"
+    return await share_service.share_stats(db, link_id, current_user.id, is_admin)
+
+
+@router.put("/{link_id}", response_model=ShareLinkOut)
+async def update_link(
+    request: Request,
+    link_id: int,
+    body: ShareLinkUpdate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    is_admin = current_user.role and current_user.role.name == "admin"
+    link = await share_service.update_share_link(
+        db,
+        link_id,
+        current_user.id,
+        is_admin,
+        **body.model_dump(exclude_unset=True),
+    )
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action="share_update",
+        resource_type="share",
+        user=current_user,
+        mount_id=link.mount_id,
+        path=link.file_path,
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={"share_id": link.id},
+    )
+    return link
 
 
 # ── 删除/停用分享链接 ─────────────────────────────────────
