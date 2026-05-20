@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, mounts, users, files, transfers, webdav, system, shares, notifications, mount_permissions, search
+from app.api.v1 import auth, mounts, users, files, transfers, webdav, system, shares, notifications, mount_permissions, search, trash
 
 api_router = APIRouter(prefix="/v1")
 
@@ -15,3 +15,4 @@ api_router.include_router(shares.router, prefix="/shares", tags=["分享链接"]
 api_router.include_router(notifications.router, prefix="/notifications", tags=["通知"])
 api_router.include_router(mount_permissions.router, prefix="/mounts", tags=["挂载权限"])
 api_router.include_router(search.router, prefix="/search", tags=["搜索"])
+api_router.include_router(trash.router, prefix="/trash", tags=["回收站"])

@@ -57,7 +57,7 @@ async def resolve_conflict(db: AsyncSession, mount_id: int, path: str,
     if policy == "skip":
         return path, True
     if policy == "overwrite":
-        await delete_file(db, mount_id, path)
+        await delete_file_permanently(db, mount_id, path)
         return path, False
     if policy == "rename":
         for i in range(1, 1000):
@@ -78,7 +78,10 @@ async def list_dir(db: AsyncSession, mount_id: int, path: str = "/") -> list[Fil
     try:
         await adapter.connect()
         items = await adapter.list_dir(path)
-        return items
+        return [
+            item for item in items
+            if item.path != "/.mounthub_trash" and not item.path.startswith("/.mounthub_trash/")
+        ]
     except FileNotFoundError:
         raise NotFoundException(f"目录不存在: {path}")
     except Exception as e:
@@ -132,7 +135,7 @@ async def upload_file(db: AsyncSession, mount_id: int, path: str,
         raise BadRequestException(f"上传失败: {e}")
 
 
-async def delete_file(db: AsyncSession, mount_id: int, path: str) -> None:
+async def delete_file_permanently(db: AsyncSession, mount_id: int, path: str) -> None:
     """删除文件或目录"""
     path = normalize_path(path)
     if path == "/":
@@ -146,6 +149,13 @@ async def delete_file(db: AsyncSession, mount_id: int, path: str) -> None:
     except Exception as e:
         logger.error("delete 失败 mount=%d path=%s: %s", mount_id, path, e)
         raise BadRequestException(f"删除失败: {e}")
+
+
+async def delete_file(db: AsyncSession, mount_id: int, path: str, user=None) -> None:
+    """Move a file or directory into the recycle bin."""
+    from app.services import trash_service
+
+    await trash_service.trash_file(db, mount_id, path, user=user)
 
 
 async def make_directory(db: AsyncSession, mount_id: int, path: str) -> FileInfo:

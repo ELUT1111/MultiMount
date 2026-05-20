@@ -1,5 +1,6 @@
 """文件操作相关的 Pydantic 数据模型"""
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +23,49 @@ class MoveCopyRequest(BaseModel):
     src: str = Field(..., description="源路径")
     dst: str = Field(..., description="目标路径")
     conflict_policy: str = Field("error", pattern="^(error|overwrite|skip|rename)$")
+
+
+class BatchFileItem(BaseModel):
+    """Single item in a batch file operation."""
+    path: str = Field(..., min_length=1)
+    target_path: str | None = None
+
+
+class BatchFileRequest(BaseModel):
+    """Batch delete/move/copy request."""
+    action: Literal["delete", "move", "copy"]
+    items: list[BatchFileItem] = Field(..., min_length=1, max_length=200)
+    target_dir: str | None = None
+    conflict_policy: str = Field("error", pattern="^(error|overwrite|skip|rename)$")
+
+
+class BatchFileResult(BaseModel):
+    path: str
+    target_path: str | None = None
+    success: bool
+    message: str = ""
+
+
+class BatchFileResponse(BaseModel):
+    results: list[BatchFileResult]
+    success_count: int
+    failed_count: int
+
+
+class TrashItemOut(BaseModel):
+    id: int
+    mount_id: int
+    original_path: str
+    trash_path: str
+    name: str
+    is_dir: bool
+    size: int
+    deleted_by: int | None
+    deleted_by_name: str | None
+    deleted_at: datetime | None
+    created_at: datetime | None
+
+    model_config = {"from_attributes": True}
 
 
 class MultipartUploadInit(BaseModel):

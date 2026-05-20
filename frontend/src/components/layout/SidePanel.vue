@@ -43,7 +43,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { FolderOpened, Connection, User, Upload, Setting, Plus, Monitor, Cloudy, DataLine } from '@element-plus/icons-vue'
+import { Delete, FolderOpened, Connection, User, Upload, Setting, Plus, Monitor, Cloudy, DataLine, Share } from '@element-plus/icons-vue'
 import { useMountsStore } from '@/stores/mounts'
 import { useFilesStore } from '@/stores/files'
 import { useAuthStore } from '@/stores/auth'
@@ -67,6 +67,8 @@ const allMenuItems = [
   { path: '/files', label: '文件浏览器', icon: FolderOpened },
   { path: '/mounts', label: '挂载管理', icon: Connection },
   { path: '/transfers', label: '传输任务', icon: Upload },
+  { path: '/shares', label: '分享链接', icon: Share },
+  { path: '/trash', label: '回收站', icon: Delete },
   { path: '/users', label: '用户与权限', icon: User, adminOnly: true },
   { path: '/settings', label: '系统设置', icon: Setting, adminOnly: true },
   { path: '/monitor', label: '请求监控', icon: DataLine, adminOnly: true },

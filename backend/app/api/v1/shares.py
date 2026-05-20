@@ -225,17 +225,18 @@ async def delete_link(
 async def deactivate_link(
     request: Request,
     link_id: int,
-    admin=Depends(require_admin),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """停用分享链接 (管理员)"""
-    await share_service.deactivate_link(db, link_id)
+    """停用分享链接。创建者或管理员可操作。"""
+    is_admin = current_user.role and current_user.role.name == "admin"
+    await share_service.deactivate_link(db, link_id, current_user.id, is_admin)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
         db,
         action="share_deactivate",
         resource_type="share",
-        user=admin,
+        user=current_user,
         ip_address=ip,
         user_agent=user_agent,
         detail={"share_id": link_id},

@@ -143,11 +143,13 @@ async def delete_share_link(db: AsyncSession, link_id: int, user_id: int, is_adm
     await db.flush()
 
 
-async def deactivate_link(db: AsyncSession, link_id: int) -> None:
-    """停用分享链接"""
+async def deactivate_link(db: AsyncSession, link_id: int, user_id: int | None = None, is_admin: bool = False) -> None:
+    """停用分享链接。管理员可停用任意链接，普通用户仅可停用自己创建的链接。"""
     result = await db.execute(select(ShareLink).where(ShareLink.id == link_id))
     link = result.scalar_one_or_none()
     if link is None:
         raise NotFoundException("分享链接不存在")
+    if user_id is not None and not is_admin and link.created_by != user_id:
+        raise BadRequestException("无权停用此分享链接")
     link.is_active = False
     await db.flush()

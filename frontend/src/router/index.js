@@ -47,6 +47,16 @@ const routes = [
         component: () => import('@/views/TransferTasks.vue'),
       },
       {
+        path: 'shares',
+        name: 'ShareManager',
+        component: () => import('@/views/ShareManager.vue'),
+      },
+      {
+        path: 'trash',
+        name: 'TrashManager',
+        component: () => import('@/views/TrashManager.vue'),
+      },
+      {
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('@/views/SystemSettings.vue'),

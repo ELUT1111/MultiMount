@@ -57,6 +57,10 @@ export const moveFile = (mountId, src, dst, conflictPolicy = 'error') =>
 export const copyFile = (mountId, src, dst, conflictPolicy = 'error') =>
   request.post(`/files/${mountId}/copy`, { src, dst, conflict_policy: conflictPolicy })
 
+/** 批量文件操作 */
+export const batchFileOperation = (mountId, data) =>
+  request.post(`/files/${mountId}/batch`, data)
+
 /** 生成分享链接 (委托给 shares API) */
 export const createShareLink = (mountId, path) =>
   request.post('/shares', { mount_id: mountId, file_path: path })

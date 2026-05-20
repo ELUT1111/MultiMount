@@ -9,3 +9,4 @@ from app.models.access_log import AccessLog  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.mount_permission import MountPermission  # noqa: F401
 from app.models.operation_log import OperationLog  # noqa: F401
+from app.models.trash_item import TrashItem  # noqa: F401

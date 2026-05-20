@@ -37,6 +37,18 @@
     <div v-if="selectionActive" class="batch-toolbar">
       <span>已选择 {{ selectedFiles.length }} 个项目</span>
       <div class="batch-actions">
+        <el-button size="small" :icon="Download" @click="handleBatchDownload" :disabled="!selectedFiles.length">
+          下载
+        </el-button>
+        <el-button size="small" :icon="CopyDocument" @click="handleBatchCopy" :disabled="!selectedFiles.length || !canWriteCurrentMount">
+          复制
+        </el-button>
+        <el-button size="small" @click="handleBatchMove" :disabled="!selectedFiles.length || !canWriteCurrentMount">
+          移动
+        </el-button>
+        <el-button size="small" :icon="Share" @click="handleBatchShare" :disabled="!selectedFiles.length">
+          分享
+        </el-button>
         <el-button size="small" @click="clearSelection" :disabled="!selectedFiles.length">清空选择</el-button>
         <el-button size="small" type="danger" plain @click="handleBatchDelete" :disabled="!selectedFiles.length">
           删除
@@ -267,8 +279,8 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Document, Download, Edit, Folder, FolderAdd, MoreFilled, UploadFilled, View } from '@element-plus/icons-vue'
-import { deleteFile, createDirectory, moveFile, downloadFile } from '@/api/files'
+import { CopyDocument, Delete, Document, Download, Edit, Folder, FolderAdd, MoreFilled, Share, UploadFilled, View } from '@element-plus/icons-vue'
+import { batchFileOperation, deleteFile, createDirectory, moveFile, downloadFile, createShareLink } from '@/api/files'
 import { formatSize, formatTime } from '@/utils/format'
 import { useFilesStore } from '@/stores/files'
 import { useUpload } from '@/composables/useUpload'
@@ -559,21 +571,118 @@ function handleFileBrowserKeydown(event) {
   }
 }
 
-// 批量删除 (并行执行)
-async function handleBatchDelete() {
-  await ElMessageBox.confirm(`确定删除选中的 ${selectedFiles.value.length} 个项目?`, '确认删除', { type: 'warning' })
-  const results = await Promise.allSettled(
-    selectedFiles.value.map((f) => deleteFile(files.currentMountId, f.path))
-  )
-  const failed = results.filter((r) => r.status === 'rejected').length
-  if (failed === 0) {
-    ElMessage.success(`已删除 ${selectedFiles.value.length} 个项目`)
+function selectedMountId(file) {
+  return file?.mount_id || files.currentMountId
+}
+
+function groupSelectedByMount(items = selectedFiles.value) {
+  return items.reduce((groups, file) => {
+    const mountId = selectedMountId(file)
+    if (!groups[mountId]) groups[mountId] = []
+    groups[mountId].push(file)
+    return groups
+  }, {})
+}
+
+function finishBatchMessage(actionText, successCount, failedCount) {
+  if (failedCount === 0) {
+    ElMessage.success(`${actionText}完成: ${successCount} 个项目`)
   } else {
-    ElMessage.warning(`删除完成，${failed} 个项目失败`)
+    ElMessage.warning(`${actionText}完成: ${successCount} 个成功, ${failedCount} 个失败`)
   }
-  selectedFiles.value = []
+}
+
+function resetBatchAfterChange() {
+  clearSelection()
   batchMode.value = false
   files.refresh()
+}
+
+async function handleBatchDownload() {
+  const downloadable = selectedFiles.value.filter((file) => !file.is_dir)
+  const skipped = selectedFiles.value.length - downloadable.length
+  if (!downloadable.length) return ElMessage.warning('选中的项目中没有可下载文件')
+
+  let successCount = 0
+  let failedCount = 0
+  for (const file of downloadable) {
+    try {
+      const blob = await downloadFile(selectedMountId(file), file.path)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.name
+      a.click()
+      URL.revokeObjectURL(url)
+      successCount += 1
+    } catch {
+      failedCount += 1
+    }
+  }
+  finishBatchMessage('下载', successCount, failedCount + skipped)
+}
+
+async function runBatchTransfer(action) {
+  const groups = groupSelectedByMount()
+  if (Object.keys(groups).length !== 1) {
+    ElMessage.warning('批量复制/移动仅支持同一挂载源内的项目')
+    return
+  }
+  const { value } = await ElMessageBox.prompt('请输入目标目录路径', action === 'copy' ? '批量复制' : '批量移动', {
+    inputValue: files.currentPath,
+    inputValidator: (v) => !!v.trim() || '路径不能为空',
+  })
+  const mountId = Number(Object.keys(groups)[0])
+  const res = await batchFileOperation(mountId, {
+    action,
+    target_dir: value.trim(),
+    conflict_policy: 'rename',
+    items: groups[mountId].map((file) => ({ path: file.path })),
+  })
+  finishBatchMessage(action === 'copy' ? '复制' : '移动', res.success_count, res.failed_count)
+  resetBatchAfterChange()
+}
+
+async function handleBatchCopy() {
+  await runBatchTransfer('copy')
+}
+
+async function handleBatchMove() {
+  await runBatchTransfer('move')
+}
+
+async function handleBatchShare() {
+  const shareable = selectedFiles.value.filter((file) => !file.is_dir)
+  const skipped = selectedFiles.value.length - shareable.length
+  if (!shareable.length) return ElMessage.warning('选中的项目中没有可分享文件')
+
+  const results = await Promise.allSettled(
+    shareable.map((file) => createShareLink(selectedMountId(file), file.path))
+  )
+  const links = results
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => `${location.origin}/share/${result.value.token}`)
+  if (links.length) {
+    await navigator.clipboard.writeText(links.join('\n'))
+  }
+  finishBatchMessage('分享', links.length, results.length - links.length + skipped)
+}
+
+async function handleBatchDelete() {
+  await ElMessageBox.confirm(`确定删除选中的 ${selectedFiles.value.length} 个项目?`, '确认删除', { type: 'warning' })
+  let successCount = 0
+  let failedCount = 0
+  const groups = groupSelectedByMount()
+  for (const [mountId, items] of Object.entries(groups)) {
+    const res = await batchFileOperation(Number(mountId), {
+      action: 'delete',
+      items: items.map((file) => ({ path: file.path })),
+    })
+    successCount += res.success_count
+    failedCount += res.failed_count
+  }
+  finishBatchMessage('删除', successCount, failedCount)
+  resetBatchAfterChange()
 }
 
 // 移动文件

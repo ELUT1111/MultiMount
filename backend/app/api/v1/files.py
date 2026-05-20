@@ -3,6 +3,7 @@
 所有路由通过 mount_id 定位挂载点, path 参数指定虚拟路径。
 权限校验: 读操作需 read 权限, 写操作需 readwrite 权限。
 """
+from pathlib import PurePosixPath
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File as FastAPIFile
@@ -10,10 +11,20 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.dependencies import get_current_user
+from app.core.policy import enforce_file_policy
 from app.core.mount_permissions import require_file_action
-from app.schemas.file import FileInfoOut, MoveCopyRequest, MultipartUploadInit, MultipartUploadInitOut
+from app.schemas.file import (
+    BatchFileRequest,
+    BatchFileResponse,
+    BatchFileResult,
+    FileInfoOut,
+    MoveCopyRequest,
+    MultipartUploadInit,
+    MultipartUploadInitOut,
+)
 from app.services import file_service, operation_log_service, upload_session_service
-from app.utils.path_utils import safe_upload_filename
+from app.utils.path_utils import normalize_path, safe_upload_filename
 
 router = APIRouter()
 
@@ -234,7 +245,7 @@ async def delete_file(
     db: AsyncSession = Depends(get_db),
 ):
     """删除文件或目录"""
-    await file_service.delete_file(db, mount_id, path)
+    await file_service.delete_file(db, mount_id, path, user=current_user)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
         db,
@@ -245,7 +256,73 @@ async def delete_file(
         ip_address=ip,
         user_agent=user_agent,
     )
-    return {"message": "已删除"}
+    return {"message": "已移入回收站"}
+
+
+def _batch_target_path(source_path: str, target_dir: str | None, explicit_target: str | None) -> str | None:
+    if explicit_target:
+        return normalize_path(explicit_target)
+    if not target_dir:
+        return None
+    name = PurePosixPath(normalize_path(source_path)).name
+    return normalize_path(target_dir.rstrip("/") + "/" + name)
+
+
+@router.post("/{mount_id}/batch", response_model=BatchFileResponse)
+async def batch_file_operation(
+    request: Request,
+    mount_id: int,
+    body: BatchFileRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch delete/move/copy within one mount and return per-item results."""
+    await enforce_file_policy(db, current_user, mount_id, body.action)
+    results: list[BatchFileResult] = []
+
+    for item in body.items:
+        source_path = normalize_path(item.path)
+        target_path = _batch_target_path(source_path, body.target_dir, item.target_path)
+        try:
+            if body.action == "delete":
+                await file_service.delete_file(db, mount_id, source_path, user=current_user)
+            elif body.action == "move":
+                if not target_path:
+                    raise ValueError("target_dir or target_path is required")
+                await file_service.move_file(db, mount_id, source_path, target_path, body.conflict_policy)
+            elif body.action == "copy":
+                if not target_path:
+                    raise ValueError("target_dir or target_path is required")
+                await file_service.copy_file(db, mount_id, source_path, target_path, body.conflict_policy)
+            results.append(BatchFileResult(path=source_path, target_path=target_path, success=True))
+        except Exception as exc:
+            results.append(
+                BatchFileResult(
+                    path=source_path,
+                    target_path=target_path,
+                    success=False,
+                    message=getattr(exc, "detail", str(exc)),
+                )
+            )
+
+    success_count = sum(1 for item in results if item.success)
+    failed_count = len(results) - success_count
+    ip, user_agent = operation_log_service.request_context(request)
+    await operation_log_service.log_operation(
+        db,
+        action=f"file_batch_{body.action}",
+        user=current_user,
+        mount_id=mount_id,
+        status="success" if failed_count == 0 else "partial_failed",
+        ip_address=ip,
+        user_agent=user_agent,
+        detail={
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "items": [item.model_dump() for item in results],
+        },
+    )
+    return BatchFileResponse(results=results, success_count=success_count, failed_count=failed_count)
 
 
 @router.post("/{mount_id}/multipart/init", response_model=MultipartUploadInitOut)
