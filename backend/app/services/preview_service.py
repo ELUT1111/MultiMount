@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import hashlib
+import io
 from pathlib import Path
 
 from app.adapters.base import FileInfo
@@ -12,6 +13,7 @@ from app.services.search_service import classify_file
 THUMB_ROOT = Path("data/preview_cache/thumbnails")
 TEXT_PREVIEW_LIMIT = 256 * 1024
 IMAGE_CACHE_LIMIT = 8 * 1024 * 1024
+THUMBNAIL_SIZE = (320, 200)
 
 
 def preview_kind(info: FileInfo) -> str:
@@ -41,11 +43,18 @@ async def thumbnail_bytes(db, mount_id: int, path: str) -> tuple[bytes, str]:
     kind = preview_kind(info)
     key = _cache_key(mount_id, info)
     THUMB_ROOT.mkdir(parents=True, exist_ok=True)
-    suffix = ".bin" if kind == "image" else ".svg"
-    cache_path = THUMB_ROOT / f"{key}{suffix}"
-    if cache_path.exists():
-        media = info.mime_type or "image/*" if kind == "image" else "image/svg+xml"
-        return cache_path.read_bytes(), media
+    if kind == "image":
+        jpeg_cache = THUMB_ROOT / f"{key}.jpg"
+        original_cache = THUMB_ROOT / f"{key}.orig"
+        if jpeg_cache.exists():
+            return jpeg_cache.read_bytes(), "image/jpeg"
+        if original_cache.exists():
+            return original_cache.read_bytes(), info.mime_type or "application/octet-stream"
+        cache_path = jpeg_cache
+    else:
+        cache_path = THUMB_ROOT / f"{key}.svg"
+        if cache_path.exists():
+            return cache_path.read_bytes(), "image/svg+xml"
 
     if kind == "image" and info.size <= IMAGE_CACHE_LIMIT:
         data = bytearray()
@@ -54,10 +63,13 @@ async def thumbnail_bytes(db, mount_id: int, path: str) -> tuple[bytes, str]:
             if len(data) > IMAGE_CACHE_LIMIT:
                 break
         if len(data) <= IMAGE_CACHE_LIMIT:
-            cache_path.write_bytes(bytes(data))
-            return bytes(data), info.mime_type or "image/*"
+            thumb, media_type, cache_as_thumbnail = _make_image_thumbnail(bytes(data), info.mime_type)
+            cache_path = cache_path if cache_as_thumbnail else THUMB_ROOT / f"{key}.orig"
+            cache_path.write_bytes(thumb)
+            return thumb, media_type
 
     labels = {
+        "image": ("IMAGE", info.name, "#2d6cdf"),
         "video": ("VIDEO", info.name, "#2d6cdf"),
         "audio": ("AUDIO", info.name, "#6f42c1"),
         "pdf": ("PDF", info.name, "#c93c37"),
@@ -68,8 +80,33 @@ async def thumbnail_bytes(db, mount_id: int, path: str) -> tuple[bytes, str]:
     }
     title, subtitle, color = labels.get(kind, labels["other"])
     data = _placeholder_svg(title, subtitle, color)
+    if kind == "image":
+        cache_path = THUMB_ROOT / f"{key}.svg"
     cache_path.write_bytes(data)
     return data, "image/svg+xml"
+
+
+def _make_image_thumbnail(data: bytes, mime_type: str | None) -> tuple[bytes, str, bool]:
+    if (mime_type or "").lower() == "image/svg+xml":
+        return data, "image/svg+xml", False
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(data)) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+            canvas = Image.new("RGB", THUMBNAIL_SIZE, (248, 250, 252))
+            x = (THUMBNAIL_SIZE[0] - image.width) // 2
+            y = (THUMBNAIL_SIZE[1] - image.height) // 2
+            if image.mode in ("RGBA", "LA"):
+                canvas.paste(image.convert("RGBA"), (x, y), image.convert("RGBA"))
+            else:
+                canvas.paste(image.convert("RGB"), (x, y))
+            out = io.BytesIO()
+            canvas.save(out, format="JPEG", quality=82, optimize=True)
+            return out.getvalue(), "image/jpeg", True
+    except Exception:
+        return data, mime_type or "application/octet-stream", False
 
 
 def detect_encoding(data: bytes) -> tuple[str, str]:

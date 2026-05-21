@@ -16,12 +16,22 @@ def test_parse_range_header_supports_suffix_range():
 
 @pytest.mark.asyncio
 async def test_download_file_range_streams_only_requested_bytes(monkeypatch):
-    async def fake_download_file(_db, _mount_id, _path):
-        yield b"abc"
-        yield b"def"
-        yield b"ghi"
+    class FakeAdapter:
+        async def connect(self):
+            return True
 
-    monkeypatch.setattr(file_service, "download_file", fake_download_file)
+        async def download_range(self, path, start, end=None):
+            assert path == "/file.bin"
+            assert start == 2
+            assert end == 6
+            yield b"cde"
+            yield b"fg"
+
+    async def fake_get_adapter_for_mount(_db, mount_id):
+        assert mount_id == 1
+        return None, FakeAdapter()
+
+    monkeypatch.setattr(file_service, "get_adapter_for_mount", fake_get_adapter_for_mount)
 
     chunks = []
     async for chunk in file_service.download_file_range(None, 1, "/file.bin", 2, 6):

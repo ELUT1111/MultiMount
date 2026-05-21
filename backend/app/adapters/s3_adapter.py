@@ -149,6 +149,26 @@ class S3Adapter(BaseAdapter):
                 break
             yield chunk
 
+    async def download_range(self, path: str, start: int, end: int | None = None) -> AsyncIterator[bytes]:
+        client = self._get_client()
+        key = self._to_key(path)
+        range_header = f"bytes={start}-{'' if end is None else end}"
+
+        def _get_body():
+            resp = client.get_object(Bucket=self._bucket_name, Key=key, Range=range_header)
+            return resp["Body"]
+
+        body = await asyncio.to_thread(_get_body)
+
+        def _read_chunk():
+            return body.read(CHUNK_SIZE)
+
+        while True:
+            chunk = await asyncio.to_thread(_read_chunk)
+            if not chunk:
+                break
+            yield chunk
+
     async def upload(self, path: str, data: AsyncIterator[bytes], size: int | None = None) -> None:
         client = self._get_client()
         key = self._to_key(path)

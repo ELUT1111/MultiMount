@@ -19,11 +19,21 @@ async def _search_index_refresh_loop(logger) -> None:
     from app.database import async_session_factory
     from app.services.search_service import refresh_all_indexes
 
+    interval = settings.SEARCH_INDEX_REFRESH_INTERVAL_SECONDS
+    if interval <= 0:
+        logger.info("搜索索引定时刷新已禁用")
+        return
+
+    refresh_lock = asyncio.Lock()
     while True:
-        await asyncio.sleep(settings.SEARCH_INDEX_REFRESH_INTERVAL_SECONDS)
+        await asyncio.sleep(interval)
         try:
-            async with async_session_factory() as db:
-                summary = await refresh_all_indexes(db)
+            if refresh_lock.locked():
+                logger.warning("上一次搜索索引刷新仍在运行，跳过本轮")
+                continue
+            async with refresh_lock:
+                async with async_session_factory() as db:
+                    summary = await refresh_all_indexes(db)
             logger.info("搜索索引定时刷新完成: %s", summary)
         except asyncio.CancelledError:
             raise

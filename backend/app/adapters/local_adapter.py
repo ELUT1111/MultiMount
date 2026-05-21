@@ -76,6 +76,22 @@ class LocalAdapter(BaseAdapter):
             while chunk := await f.read(64 * 1024):
                 yield chunk
 
+    async def download_range(self, path: str, start: int, end: int | None = None) -> AsyncIterator[bytes]:
+        real = self._resolve(path)
+        if start < 0 or (end is not None and end < start):
+            raise ValueError("invalid range")
+        remaining = None if end is None else end - start + 1
+        async with aiofiles.open(real, "rb") as f:
+            await f.seek(start)
+            while remaining is None or remaining > 0:
+                read_size = 64 * 1024 if remaining is None else min(64 * 1024, remaining)
+                chunk = await f.read(read_size)
+                if not chunk:
+                    break
+                if remaining is not None:
+                    remaining -= len(chunk)
+                yield chunk
+
     async def upload(self, path: str, data: AsyncIterator[bytes], size: int | None = None) -> None:
         real = self._resolve(path)
         real.parent.mkdir(parents=True, exist_ok=True)

@@ -124,33 +124,21 @@ async def download_file_range(
     start: int = 0,
     end: int | None = None,
 ) -> AsyncIterator[bytes]:
-    """Stream a byte range without buffering the whole file in memory."""
+    """Stream a byte range, preferring adapter-native range support."""
     if start < 0 or (end is not None and end < start):
         raise BadRequestException("无效的 Range 请求")
 
-    skipped = 0
-    emitted = 0
-    limit = None if end is None else end - start + 1
-
-    async for chunk in download_file(db, mount_id, path):
-        if skipped < start:
-            skip = min(start - skipped, len(chunk))
-            chunk = chunk[skip:]
-            skipped += skip
-            if not chunk:
-                continue
-
-        if limit is not None:
-            remaining = limit - emitted
-            if remaining <= 0:
-                break
-            chunk = chunk[:remaining]
-
-        emitted += len(chunk)
-        yield chunk
-
-        if limit is not None and emitted >= limit:
-            break
+    path = normalize_path(path)
+    _, adapter = await get_adapter_for_mount(db, mount_id)
+    try:
+        await adapter.connect()
+        async for chunk in adapter.download_range(path, start, end):
+            yield chunk
+    except FileNotFoundError:
+        raise NotFoundException(f"文件不存在: {path}")
+    except Exception as e:
+        logger.error("range download 失败 mount=%d path=%s range=%s-%s: %s", mount_id, path, start, end, e)
+        raise BadRequestException(f"范围下载失败: {e}")
 
 
 async def upload_file(db: AsyncSession, mount_id: int, path: str,

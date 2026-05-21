@@ -44,6 +44,30 @@ class BaseAdapter(ABC):
     async def download(self, path: str) -> AsyncIterator[bytes]:
         """流式下载文件 (支持大文件)"""
 
+    async def download_range(self, path: str, start: int, end: int | None = None) -> AsyncIterator[bytes]:
+        """Stream a byte range. Adapters may override with native range requests."""
+        if start < 0 or (end is not None and end < start):
+            raise ValueError("invalid range")
+        skipped = 0
+        emitted = 0
+        limit = None if end is None else end - start + 1
+        async for chunk in self.download(path):
+            if skipped < start:
+                skip = min(start - skipped, len(chunk))
+                chunk = chunk[skip:]
+                skipped += skip
+                if not chunk:
+                    continue
+            if limit is not None:
+                remaining = limit - emitted
+                if remaining <= 0:
+                    break
+                chunk = chunk[:remaining]
+            emitted += len(chunk)
+            yield chunk
+            if limit is not None and emitted >= limit:
+                break
+
     @abstractmethod
     async def upload(self, path: str, data: AsyncIterator[bytes],
                      size: int | None = None) -> None:

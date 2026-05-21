@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
 _loop: asyncio.AbstractEventLoop | None = None
+MOUNT_CACHE_TTL_SECONDS = 15
 
 
 def _get_loop() -> asyncio.AbstractEventLoop:
@@ -405,6 +406,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
         self._session_factory = session_factory
         self._recycle_delete = recycle_delete
         self._root_mount_id = root_mount_id
+        self._mount_cache: dict[int, tuple[float, list[MountHandle]]] = {}
 
     def get_resource_inst(self, path: str, environ: dict):
         user = self._user_from_environ(environ)
@@ -453,6 +455,11 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
             return None
 
     def _visible_mounts(self, user: User) -> list[MountHandle]:
+        now = time.monotonic()
+        cached = self._mount_cache.get(user.id)
+        if cached and now - cached[0] < MOUNT_CACHE_TTL_SECONDS:
+            return cached[1]
+
         async def _load():
             async with self._session_factory() as db:
                 accessible = await get_accessible_mount_ids(db, user)
@@ -488,7 +495,9 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
                         continue
                 return handles
 
-        return _run_async(_load())
+        handles = _run_async(_load())
+        self._mount_cache[user.id] = (now, handles)
+        return handles
 
     def _mount_for_name(self, user: User, safe_name: str) -> MountHandle | None:
         for handle in self._visible_mounts(user):

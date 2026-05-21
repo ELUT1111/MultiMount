@@ -135,6 +135,24 @@ class OSSAdapter(BaseAdapter):
                 break
             yield chunk
 
+    async def download_range(self, path: str, start: int, end: int | None = None) -> AsyncIterator[bytes]:
+        bucket = self._get_bucket()
+        key = self._to_key(path)
+
+        def _get_result():
+            return bucket.get_object(key, byte_range=(start, end))
+
+        result = await asyncio.to_thread(_get_result)
+
+        def _read_chunk():
+            return result.read(CHUNK_SIZE)
+
+        while True:
+            chunk = await asyncio.to_thread(_read_chunk)
+            if not chunk:
+                break
+            yield chunk
+
     async def upload(self, path: str, data: AsyncIterator[bytes], size: int | None = None) -> None:
         bucket = self._get_bucket()
         key = self._to_key(path)
