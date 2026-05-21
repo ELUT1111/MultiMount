@@ -28,7 +28,7 @@ pip install -e .
 cp .env.example .env
 
 # 启动服务
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8014 --reload
 ```
 
 后端启动后会自动:
@@ -48,7 +48,7 @@ npm install
 npm run dev
 ```
 
-访问 http://localhost:5173 ，前端已配置代理将 `/api` 请求转发到后端 `http://127.0.0.1:8000`。
+访问 http://localhost:5173 ，前端通过 `VITE_API_BASE_URL` 连接后端 `http://localhost:8014`。也可以使用 Vite 代理将 `/api` 请求转发到后端 `http://127.0.0.1:8014`。
 
 ### 3. 默认管理员账号
 
@@ -65,7 +65,7 @@ npm run dev
 ```ini
 # 应用
 APP_HOST=0.0.0.0
-APP_PORT=8000
+APP_PORT=8014
 DEBUG=true
 
 # 数据库 (默认 SQLite，文件存储在 data/ 目录)
@@ -83,6 +83,12 @@ CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]
 ENCRYPTION_KEY=
 ```
 
+前端复制 `frontend/.env.example` 为 `frontend/.env`，默认 API 地址:
+
+```ini
+VITE_API_BASE_URL=http://localhost:8014
+```
+
 ## 生产部署
 
 ```bash
@@ -94,7 +100,7 @@ cp -r dist/* ../backend/static/
 
 # 以生产模式启动后端 (自动托管前端)
 cd ../backend
-DEBUG=false python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+DEBUG=false python -m uvicorn app.main:app --host 0.0.0.0 --port 8014
 ```
 
 ## 功能说明

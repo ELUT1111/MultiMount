@@ -2,14 +2,17 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 
+const apiOrigin = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || ''
+const apiBaseURL = `${apiOrigin}/api/v1`
+
 const service = axios.create({
-  baseURL: '/api/v1',
+  baseURL: apiBaseURL,
   timeout: 30000,
 })
 
 // 上传专用实例 (更长超时)
 export const uploadService = axios.create({
-  baseURL: '/api/v1',
+  baseURL: apiBaseURL,
   timeout: 300000,
 })
 
@@ -19,7 +22,7 @@ let refreshPromise = null
 async function doRefresh() {
   const refresh = localStorage.getItem('refresh_token')
   if (!refresh) throw new Error('no refresh token')
-  const { data } = await axios.post('/api/v1/auth/refresh', { refresh_token: refresh })
+  const { data } = await axios.post(`${apiBaseURL}/auth/refresh`, { refresh_token: refresh })
   localStorage.setItem('access_token', data.access_token)
   localStorage.setItem('refresh_token', data.refresh_token)
   return data.access_token
