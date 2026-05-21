@@ -23,6 +23,8 @@
             <el-dropdown-menu>
               <el-dropdown-item @click="files.setViewMode('list')">列表视图</el-dropdown-item>
               <el-dropdown-item @click="files.setViewMode('grid')">网格视图</el-dropdown-item>
+              <el-dropdown-item divided @click="showColumnDialog = true">表格列配置</el-dropdown-item>
+              <el-dropdown-item @click="showShortcutDialog = true">快捷键说明</el-dropdown-item>
               <el-dropdown-item divided @click="files.setSortBy('name')">按名称排序</el-dropdown-item>
               <el-dropdown-item @click="files.setSortBy('size')">按大小排序</el-dropdown-item>
               <el-dropdown-item @click="files.setSortBy('modified')">按修改时间排序</el-dropdown-item>
@@ -83,10 +85,30 @@
         <el-select v-model="search.filterByOwner" placeholder="创建者" clearable size="default">
           <el-option v-for="o in search.availableOwners" :key="o" :label="o" :value="o" />
         </el-select>
+        <el-select v-model="search.fileType" placeholder="类型" clearable size="default">
+          <el-option label="目录" value="directory" />
+          <el-option label="图片" value="image" />
+          <el-option label="视频" value="video" />
+          <el-option label="音频" value="audio" />
+          <el-option label="PDF" value="pdf" />
+          <el-option label="Office" value="office" />
+          <el-option label="文本" value="text" />
+          <el-option label="其他" value="other" />
+        </el-select>
+        <el-input v-model="search.pathPrefix" placeholder="路径前缀" size="default" clearable />
+        <el-input v-model="search.extension" placeholder="扩展名" size="default" clearable />
+        <el-input-number v-model="search.sizeMin" placeholder="最小字节" :min="0" controls-position="right" size="default" />
+        <el-input-number v-model="search.sizeMax" placeholder="最大字节" :min="0" controls-position="right" size="default" />
+        <el-date-picker v-model="search.modifiedFrom" type="datetime" placeholder="修改时间起" value-format="YYYY-MM-DDTHH:mm:ss" size="default" />
+        <el-date-picker v-model="search.modifiedTo" type="datetime" placeholder="修改时间止" value-format="YYYY-MM-DDTHH:mm:ss" size="default" />
         <el-button type="primary" @click="doSearch" :loading="search.loading">搜索</el-button>
+        <el-button @click="search.refreshIndex()" :loading="search.indexing">刷新索引</el-button>
       </div>
       <div class="search-meta">
-        <span>找到 {{ search.filteredResults.length }} 个结果</span>
+        <span>
+          找到 {{ search.filteredResults.length }} 个结果
+          <template v-if="search.indexSummary">，索引 {{ search.indexSummary.indexed }} 项</template>
+        </span>
         <el-button text type="primary" size="small" @click="exitSearch">返回浏览</el-button>
       </div>
     </div>
@@ -100,12 +122,19 @@
     <!-- 主内容区 -->
     <div class="file-content-wrapper">
       <div v-loading="files.loading || search.loading" class="file-content">
-        <el-empty v-if="!search.searched && !files.loading && emptyState" :description="emptyState.description">
-          <el-button v-if="emptyState.action" type="primary" @click="emptyState.action">{{ emptyState.actionText }}</el-button>
-        </el-empty>
-        <el-empty
+        <UnifiedState
+          v-if="!search.searched && !files.loading && emptyState"
+          :type="emptyState.type"
+          :title="emptyState.title"
+          :description="emptyState.description"
+          :action-text="emptyState.actionText"
+          @action="emptyState.action?.()"
+        />
+        <UnifiedState
           v-if="search.searched && !search.loading && sortedSearchResults.length === 0"
-          :description="search.error || '未找到匹配的文件'"
+          :type="search.error ? 'error' : 'search'"
+          :title="search.error ? '搜索失败' : '没有搜索结果'"
+          :description="search.error || '调整关键词或高级条件后再试'"
         />
         <div v-if="!search.searched && files.totalPages > 1" class="file-pagination">
           <el-pagination
@@ -150,7 +179,7 @@
               </button>
             </template>
           </el-table-column>
-          <el-table-column label="大小" width="120" class-name="hide-sm" label-class-name="hide-sm">
+          <el-table-column v-if="columnVisible('size')" label="大小" :width="columnWidth('size')" :fixed="columnFixed('size')" class-name="hide-sm" label-class-name="hide-sm">
             <template #header>
               <button class="sort-header" @click="handleSortHeaderClick('size')" @contextmenu.prevent="handleSortHeaderContextMenu('size')" :title="sortHeaderTitle('size')">
                 <span>大小</span>
@@ -161,7 +190,7 @@
             </template>
             <template #default="{ row }">{{ row.is_dir ? '-' : formatSize(row.size) }}</template>
           </el-table-column>
-          <el-table-column label="修改时间" width="180">
+          <el-table-column v-if="columnVisible('modified_at')" label="修改时间" :width="columnWidth('modified_at')" :fixed="columnFixed('modified_at')">
             <template #header>
               <button class="sort-header" @click="handleSortHeaderClick('modified_at')" @contextmenu.prevent="handleSortHeaderContextMenu('modified_at')" :title="sortHeaderTitle('modified_at')">
                 <span>修改时间</span>
@@ -172,7 +201,7 @@
             </template>
             <template #default="{ row }">{{ formatTime(row.modified_at) }}</template>
           </el-table-column>
-          <el-table-column label="创建时间" width="180" class-name="hide-sm" label-class-name="hide-sm">
+          <el-table-column v-if="columnVisible('created_at')" label="创建时间" :width="columnWidth('created_at')" :fixed="columnFixed('created_at')" class-name="hide-sm" label-class-name="hide-sm">
             <template #header>
               <button class="sort-header" @click="handleSortHeaderClick('created_at')" @contextmenu.prevent="handleSortHeaderContextMenu('created_at')" :title="sortHeaderTitle('created_at')">
                 <span>创建时间</span>
@@ -183,7 +212,7 @@
             </template>
             <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
-          <el-table-column label="挂载源" width="120" class-name="hide-sm" label-class-name="hide-sm">
+          <el-table-column v-if="columnVisible('mount_name')" label="挂载源" :width="columnWidth('mount_name')" :fixed="columnFixed('mount_name')" class-name="hide-sm" label-class-name="hide-sm">
             <template #header>
               <button class="sort-header" @click="handleSortHeaderClick('mount_name')" @contextmenu.prevent="handleSortHeaderContextMenu('mount_name')" :title="sortHeaderTitle('mount_name')">
                 <span>挂载源</span>
@@ -194,7 +223,7 @@
             </template>
             <template #default="{ row }">{{ search.searched ? row.mount_name : currentMountName }}</template>
           </el-table-column>
-          <el-table-column label="创建者" width="120" class-name="hide-sm" label-class-name="hide-sm">
+          <el-table-column v-if="columnVisible('creator')" label="创建者" :width="columnWidth('creator')" :fixed="columnFixed('creator')" class-name="hide-sm" label-class-name="hide-sm">
             <template #header>
               <button class="sort-header" @click="handleSortHeaderClick('creator')" @contextmenu.prevent="handleSortHeaderContextMenu('creator')" :title="sortHeaderTitle('creator')">
                 <span>创建者</span>
@@ -248,15 +277,20 @@
         <div v-if="files.viewMode === 'grid' && displayFiles.length" class="file-grid">
           <div v-for="file in displayFiles" :key="file.path" class="file-card"
                :class="{ selected: isFileSelected(file) || fileKey(files.selectedFile) === fileKey(file) }"
+               role="button"
+               tabindex="0"
+               :aria-selected="isFileSelected(file)"
+               :aria-label="`${file.is_dir ? '文件夹' : '文件'} ${file.name}`"
                @dblclick="handleDblClick(file)"
                @click="handleFileClick(file, null, $event)"
+               @keydown.enter.prevent="handleDblClick(file)"
+               @keydown.space.prevent="toggleFileSelection(file)"
                @contextmenu.prevent="onCardContextMenu($event, file)">
             <div v-if="batchMode" class="card-checkbox">
               <el-checkbox :model-value="isFileSelected(file)" @click.stop="toggleFileSelection(file)" />
             </div>
             <div class="card-icon">
-              <el-icon :size="40" v-if="file.is_dir" color="var(--primary-color)"><Folder /></el-icon>
-              <el-icon :size="40" v-else><Document /></el-icon>
+              <FileThumbnail :mount-id="selectedMountId(file)" :file="file" />
             </div>
             <div class="card-name" :title="file.name">{{ file.name }}</div>
             <div class="card-meta">
@@ -281,7 +315,7 @@
     <FileContextMenu ref="contextMenuRef" :clipboard="clipboard" @action="handleContextAction" />
 
     <!-- 文件预览 -->
-    <FilePreview v-model="showPreview" :mount-id="files.currentMountId" :file="previewFile" @download="handleDownload(previewFile)" />
+    <FilePreview v-model="showPreview" :mount-id="previewMountId" :file="previewFile" @download="handleDownload(previewFile)" />
 
     <el-dialog v-model="showShareDialog" title="生成分享链接" width="420px" append-to-body>
       <el-form label-width="110px">
@@ -319,6 +353,41 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="showShortcutDialog" title="快捷键说明" width="520px" append-to-body class="responsive-dialog shortcut-dialog">
+      <div class="shortcut-grid">
+        <div v-for="item in shortcutItems" :key="item.keys" class="shortcut-row">
+          <kbd>{{ item.keys }}</kbd>
+          <span>{{ item.desc }}</span>
+        </div>
+      </div>
+    </el-dialog>
+
+    <el-dialog v-model="showColumnDialog" title="表格列配置" width="520px" append-to-body class="responsive-dialog column-dialog">
+      <div class="column-config">
+        <div v-for="column in configurableColumns" :key="column.key" class="column-config-row">
+          <el-checkbox :model-value="columnVisible(column.key)" @change="(value) => updateColumn(column.key, { visible: value })">
+            {{ column.label }}
+          </el-checkbox>
+          <el-input-number
+            :model-value="columnWidth(column.key)"
+            :min="90"
+            :max="320"
+            :step="10"
+            controls-position="right"
+            size="small"
+            @change="(value) => updateColumn(column.key, { width: value })"
+          />
+          <el-checkbox :model-value="!!appPrefs.fileColumns[column.key]?.fixed" @change="(value) => updateColumn(column.key, { fixed: value })">
+            固定
+          </el-checkbox>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="appPrefs.resetFileColumns()">恢复默认</el-button>
+        <el-button type="primary" @click="showColumnDialog = false">完成</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 上传进度 -->
     <div v-if="upload.uploading.value" class="upload-bar">
       <span>正在上传: {{ upload.currentFile.value }}</span>
@@ -339,9 +408,12 @@ import { useFilesStore } from '@/stores/files'
 import { useUpload } from '@/composables/useUpload'
 import { useMountsStore } from '@/stores/mounts'
 import { useSearchStore } from '@/stores/search'
+import { useAppStore } from '@/stores/app'
 import DetailPanel from '@/components/layout/DetailPanel.vue'
 import FileContextMenu from '@/components/file/FileContextMenu.vue'
 import FilePreview from '@/components/file/FilePreview.vue'
+import FileThumbnail from '@/components/file/FileThumbnail.vue'
+import UnifiedState from '@/components/common/UnifiedState.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -349,12 +421,14 @@ const files = useFilesStore()
 const mounts = useMountsStore()
 const upload = useUpload()
 const search = useSearchStore()
+const appPrefs = useAppStore()
 
 const contextMenuRef = ref()
 const fileTableRef = ref()
 const dragging = ref(false)
 const showPreview = ref(false)
 const previewFile = ref(null)
+const previewMountId = computed(() => selectedMountId(previewFile.value))
 const clipboard = ref(null) // { action: 'copy'|'cut', file: FileInfo }
 const batchMode = ref(false)
 const selectedFiles = ref([])
@@ -372,25 +446,68 @@ const shareOptions = ref({
 const shareExportList = ref(true)
 const showBatchResultDialog = ref(false)
 const batchResultRows = ref([])
+const showShortcutDialog = ref(false)
+const showColumnDialog = ref(false)
+
+const configurableColumns = [
+  { key: 'size', label: '大小' },
+  { key: 'modified_at', label: '修改时间' },
+  { key: 'created_at', label: '创建时间' },
+  { key: 'mount_name', label: '挂载源' },
+  { key: 'creator', label: '创建者' },
+]
+
+const shortcutItems = [
+  { keys: '↑ / ↓', desc: '移动焦点' },
+  { keys: 'Shift + ↑ / ↓', desc: '范围选择' },
+  { keys: 'Ctrl / Cmd + A', desc: '全选当前页' },
+  { keys: 'Ctrl / Cmd + C', desc: '复制选中文件' },
+  { keys: 'Ctrl / Cmd + X', desc: '剪切选中文件' },
+  { keys: 'Ctrl / Cmd + V', desc: '粘贴到当前目录' },
+  { keys: 'Enter', desc: '打开目录或预览文件' },
+  { keys: 'Delete', desc: '删除选中项' },
+  { keys: '?', desc: '打开快捷键说明' },
+  { keys: 'Esc', desc: '清空选择' },
+]
 
 const currentMount = computed(() => mounts.mounts.find((m) => m.id === files.currentMountId) || null)
 const canWriteCurrentMount = computed(() => currentMount.value?.my_level === 'readwrite')
 const emptyState = computed(() => {
   if (!mounts.mounts.length) {
     return {
+      type: 'forbidden',
+      title: '没有可访问的挂载点',
       description: '暂无可访问的挂载点',
       actionText: '去添加挂载',
       action: () => router.push('/mounts'),
     }
   }
   if (!files.currentMountId) {
-    return { description: '请选择一个挂载点开始浏览' }
+    return { type: 'info', title: '请选择挂载点', description: '请选择一个挂载点开始浏览' }
+  }
+  if (files.error) {
+    const forbidden = String(files.error).includes('权限') || String(files.error).includes('403')
+    return {
+      type: forbidden ? 'forbidden' : 'error',
+      title: forbidden ? '权限不足' : '加载失败',
+      description: files.error,
+      actionText: '重试',
+      action: () => files.refresh(),
+    }
   }
   if (currentMount.value?.status === 'offline') {
-    return { description: '当前挂载离线，文件列表可能不可用' }
+    return {
+      type: 'offline',
+      title: '挂载离线',
+      description: '当前挂载离线，文件列表可能不可用',
+      actionText: '刷新',
+      action: () => files.refresh(),
+    }
   }
   if (files.sortedFiles.length === 0) {
     return {
+      type: 'empty',
+      title: '目录为空',
       description: '此目录为空',
       actionText: canWriteCurrentMount.value ? '新建文件夹' : '',
       action: canWriteCurrentMount.value ? handleMkdir : null,
@@ -413,6 +530,22 @@ const sortFallback = computed(() => ({
 const sortedSearchResults = computed(() => files.sortEntries(search.filteredResults, sortFallback.value))
 const displayFiles = computed(() => (search.searched ? sortedSearchResults.value : files.pagedFiles))
 const selectionActive = computed(() => batchMode.value || selectedFiles.value.length > 1)
+
+function columnVisible(key) {
+  return appPrefs.fileColumns[key]?.visible !== false
+}
+
+function columnWidth(key) {
+  return appPrefs.fileColumns[key]?.width || 140
+}
+
+function columnFixed(key) {
+  return appPrefs.fileColumns[key]?.fixed ? 'left' : false
+}
+
+function updateColumn(key, patch) {
+  appPrefs.updateFileColumn(key, patch)
+}
 
 // 面包屑导航
 const breadcrumbs = computed(() => {
@@ -597,7 +730,9 @@ function moveFocus(delta, extendSelection = false) {
 
 function handleFileBrowserKeydown(event) {
   if (document.querySelector('.el-overlay-dialog, .el-overlay-message-box')) return
-  if (isTypingTarget(event.target) || !displayFiles.value.length) return
+  if (isTypingTarget(event.target)) return
+
+  if (!displayFiles.value.length) return
 
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
     event.preventDefault()
@@ -766,9 +901,8 @@ async function chooseTargetMountId(action) {
 }
 
 async function runCrossMountTransfers(action, targetMountId, targetDir = files.currentPath) {
-  const filesOnly = selectedFiles.value.filter((file) => !file.is_dir)
-  const skipped = selectedFiles.value.length - filesOnly.length
-  const results = await Promise.allSettled(filesOnly.map((file) => createTransfer({
+  const targets = selectedFiles.value
+  const results = await Promise.allSettled(targets.map((file) => createTransfer({
     type: action,
     source_mount_id: selectedMountId(file),
     target_mount_id: targetMountId,
@@ -778,14 +912,15 @@ async function runCrossMountTransfers(action, targetMountId, targetDir = files.c
     file_size: file.size,
     conflict_policy: 'rename',
   })))
-  const failed = results.filter((r) => r.status === 'rejected').length + skipped
+  const failed = results.filter((r) => r.status === 'rejected').length
   const success = results.filter((r) => r.status === 'fulfilled').length
   finishBatchMessage(action === 'copy' ? '复制任务' : '移动任务', success, failed)
-  if (skipped) {
-    batchResultRows.value = selectedFiles.value.filter((file) => file.is_dir).map((file) => ({
-      path: file.path,
-      message: '跨挂载目录传输暂未支持，已跳过',
-    }))
+  if (failed) {
+    batchResultRows.value = results.map((result, index) => ({
+      path: targets[index].path,
+      message: result.status === 'rejected' ? (result.reason?.response?.data?.detail || '任务创建失败') : '成功',
+      success: result.status === 'fulfilled',
+    })).filter((row) => !row.success)
     showBatchResultDialog.value = true
   }
   resetBatchAfterChange()
@@ -933,7 +1068,15 @@ function handleDblClick(file) {
 function canPreview(file) {
   if (file.is_dir) return false
   const mime = file.mime_type || ''
-  return mime.startsWith('image/') || mime.startsWith('text/') || ['application/json'].includes(mime)
+  const name = (file.name || '').toLowerCase()
+  return (
+    mime.startsWith('image/') ||
+    mime.startsWith('text/') ||
+    mime.startsWith('video/') ||
+    mime.startsWith('audio/') ||
+    ['application/json', 'application/xml', 'application/pdf'].includes(mime) ||
+    ['.md', '.markdown', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'].some((ext) => name.endsWith(ext))
+  )
 }
 
 // 预览
@@ -946,7 +1089,7 @@ function handlePreview(file) {
 async function handleDownload(file) {
   if (!file || file.is_dir) return
   try {
-    const blob = await downloadFile(files.currentMountId, file.path)
+    const blob = await downloadFile(selectedMountId(file), file.path)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -1150,6 +1293,10 @@ onBeforeUnmount(() => {
   border: 2px solid transparent;
 }
 .file-card:hover { background: rgba(64,158,255,0.08); }
+.file-card:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary-color) 65%, transparent);
+  outline-offset: 2px;
+}
 .file-card.selected { border-color: var(--primary-color); background: rgba(64,158,255,0.06); }
 :deep(.selected-row > td) {
   background: rgba(64,158,255,0.08) !important;
@@ -1238,6 +1385,43 @@ onBeforeUnmount(() => {
 .action-button:focus-visible {
   background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
+}
+.shortcut-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.shortcut-row kbd {
+  flex: 0 0 auto;
+  min-width: 112px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  text-align: center;
+}
+.column-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.column-config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 :deep(.danger-action) {
   color: var(--el-color-danger);

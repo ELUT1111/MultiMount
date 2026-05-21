@@ -15,7 +15,7 @@ export const useTransfersStore = defineStore('transfers', {
     /** 按状态过滤任务列表 */
     filteredTasks(state) {
       if (state.activeTab === 'running') {
-        return state.tasks.filter((t) => ['pending', 'running', 'paused'].includes(t.status))
+        return state.tasks.filter((t) => ['queued', 'pending', 'running', 'paused'].includes(t.status))
       }
       if (state.activeTab === 'completed') {
         return state.tasks.filter((t) => t.status === 'completed')

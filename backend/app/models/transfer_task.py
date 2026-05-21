@@ -2,7 +2,7 @@
 传输任务模型 — 记录上传/下载任务的完整生命周期。
 支持: 分块传输、断点续传、进度追踪、暂停/恢复。
 """
-from sqlalchemy import BigInteger, ForeignKey, Integer, String, Text, Float
+from sqlalchemy import BigInteger, ForeignKey, Integer, JSON, String, Text, Float
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -31,6 +31,9 @@ class TransferTask(BaseModel):
     transferred: Mapped[int] = mapped_column(BigInteger, default=0)
     chunk_size: Mapped[int] = mapped_column(Integer, default=65536)  # 默认 64KB
     speed: Mapped[float | None] = mapped_column(Float, nullable=True)  # bytes/s
+    download_limit_bps: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    upload_limit_bps: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    checkpoint: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     def __repr__(self):

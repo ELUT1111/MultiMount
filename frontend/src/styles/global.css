@@ -55,6 +55,57 @@ html, body, #app {
 .dark .el-radio-button__inner { background: #252525; border-color: var(--border-color); color: var(--text-regular); }
 .dark code { background: #2a2a2a; }
 
+.high-contrast {
+  --primary-color: #005fcc;
+  --success-color: #0b7d35;
+  --warning-color: #9a5b00;
+  --danger-color: #b00020;
+  --info-color: #4b5563;
+  --bg-color: #ffffff;
+  --card-bg: #ffffff;
+  --text-primary: #000000;
+  --text-regular: #1f2937;
+  --text-secondary: #374151;
+  --border-color: #111827;
+}
+.dark.high-contrast {
+  --primary-color: #7db7ff;
+  --success-color: #61d394;
+  --warning-color: #ffd166;
+  --danger-color: #ff8fa3;
+  --info-color: #d1d5db;
+  --bg-color: #000000;
+  --card-bg: #0b0b0b;
+  --text-primary: #ffffff;
+  --text-regular: #f3f4f6;
+  --text-secondary: #d1d5db;
+  --border-color: #f9fafb;
+}
+.high-contrast :focus-visible {
+  outline: 3px solid var(--primary-color);
+  outline-offset: 2px;
+}
+.high-contrast .el-button {
+  border-color: currentColor;
+}
+
+.compact {
+  --topbar-height: 48px;
+  --detail-width: 260px;
+}
+.compact .el-button {
+  --el-button-size: 28px;
+}
+.compact .el-table {
+  --el-table-header-height: 36px;
+  --el-table-row-height: 38px;
+}
+.compact .el-card,
+.compact .el-dialog,
+.compact .el-popover.el-popper {
+  --el-card-padding: 12px;
+}
+
 /* 通用响应式布局工具 */
 .responsive-filters {
   display: grid;

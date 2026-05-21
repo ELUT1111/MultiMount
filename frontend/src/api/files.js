@@ -23,6 +23,18 @@ export const batchDownloadZip = (items) =>
 export const getDirectoryStats = (mountId, path) =>
   request.get(`/files/${mountId}/stats`, { params: { path } })
 
+/** 获取预览元数据 */
+export const getPreviewMeta = (mountId, path) =>
+  request.get(`/files/${mountId}/preview/meta`, { params: { path } })
+
+/** 获取文本预览分块 */
+export const getTextPreview = (mountId, path, offset = 0, limit = 65536) =>
+  request.get(`/files/${mountId}/preview/text`, { params: { path, offset, limit } })
+
+/** 缩略图地址 (需要调用方自行携带 Authorization fetch) */
+export const getThumbnailUrl = (mountId, path) =>
+  `/api/v1/files/${mountId}/thumbnail?path=${encodeURIComponent(path)}`
+
 /** 上传文件 (FormData) */
 export const uploadFile = (mountId, path, formData, conflictPolicy = 'error') =>
   uploadService.post(`/files/${mountId}/upload`, formData, {

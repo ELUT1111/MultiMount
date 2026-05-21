@@ -1,90 +1,81 @@
-"""
-WebDAV 服务业务逻辑层 — 管理 WebDAV 服务的配置与生命周期。
-
-提供:
-  - 查询服务状态
-  - 启动/停止服务
-  - 更新配置 (端口/SSL/根目录/日志)
-"""
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.webdav_server.manager import WebDAVConfig, WebDAVManager, get_webdav_manager
+from app.webdav_server.manager import WebDAVConfig, get_webdav_manager
+
+
+def _status_dict(status) -> dict:
+    scheme = "https" if status.ssl else "http"
+    host = "localhost" if status.host in ("0.0.0.0", "::") else status.host
+    return {
+        "running": status.running,
+        "host": status.host,
+        "port": status.port,
+        "ssl": status.ssl,
+        "mount_count": status.mount_count,
+        "error": status.error,
+        "root_mount": status.root_mount_id,
+        "recycle_delete": status.recycle_delete,
+        "access_log": status.access_log,
+        "log_path": status.log_path,
+        "ssl_cert_path": status.ssl_cert_path,
+        "ssl_key_path": status.ssl_key_path,
+        "url": f"{scheme}://{host}:{status.port}/",
+        "permissions": {
+            "root_listing": "Only mounts accessible to the authenticated user are listed.",
+            "read": "download/list/info/share permissions map to read access.",
+            "write": "upload/mkdir/copy/move/delete permissions map to readwrite access.",
+        },
+    }
+
+
+def _config_from_dict(config: dict, base: WebDAVConfig | None = None) -> WebDAVConfig:
+    current = base or WebDAVConfig()
+    return WebDAVConfig(
+        host=config.get("host", current.host),
+        port=config.get("port", current.port),
+        ssl=config.get("ssl", current.ssl),
+        ssl_cert_path=config.get("ssl_cert_path", current.ssl_cert_path),
+        ssl_key_path=config.get("ssl_key_path", current.ssl_key_path),
+        root_mount_id=config.get("root_mount", current.root_mount_id),
+        access_log=config.get("access_log", current.access_log),
+        log_path=config.get("log_path", current.log_path),
+        recycle_delete=config.get("recycle_delete", current.recycle_delete),
+    )
 
 
 async def get_status() -> dict:
-    """获取 WebDAV 服务当前状态"""
     manager = get_webdav_manager()
-    s = manager.status
-    return {
-        "running": s.running,
-        "host": s.host,
-        "port": s.port,
-        "ssl": s.ssl,
-        "mount_count": s.mount_count,
-        "error": s.error,
-    }
+    return _status_dict(manager.status)
 
 
 async def start_service(db: AsyncSession, config: dict | None = None) -> dict:
-    """启动 WebDAV 服务"""
     manager = get_webdav_manager()
-    wconfig = WebDAVConfig()
-    if config:
-        wconfig.host = config.get("host", wconfig.host)
-        wconfig.port = config.get("port", wconfig.port)
-        wconfig.ssl = config.get("ssl", wconfig.ssl)
-        wconfig.ssl_cert_path = config.get("ssl_cert_path", "")
-        wconfig.ssl_key_path = config.get("ssl_key_path", "")
-        wconfig.root_mount_id = config.get("root_mount")
-        wconfig.access_log = config.get("access_log", True)
-        wconfig.log_path = config.get("log_path", "")
-
+    wconfig = _config_from_dict(config or {})
     status = await manager.start(db, wconfig)
-    return {
-        "running": status.running,
-        "host": status.host,
-        "port": status.port,
-        "ssl": status.ssl,
-        "mount_count": status.mount_count,
-        "error": status.error,
-    }
+    return _status_dict(status)
 
 
 async def stop_service() -> dict:
-    """停止 WebDAV 服务"""
     manager = get_webdav_manager()
     status = await manager.stop()
-    return {
-        "running": status.running,
-        "host": status.host,
-        "port": status.port,
-        "ssl": status.ssl,
-        "mount_count": status.mount_count,
-        "error": status.error,
-    }
+    return _status_dict(status)
 
 
 async def update_service_config(db: AsyncSession, config: dict) -> dict:
-    """更新 WebDAV 服务配置 (热更新: 如正在运行则重启)"""
     manager = get_webdav_manager()
-    wconfig = WebDAVConfig(
-        host=config.get("host", manager.status.host),
-        port=config.get("port", manager.status.port),
-        ssl=config.get("ssl", manager.status.ssl),
-        ssl_cert_path=config.get("ssl_cert_path", ""),
-        ssl_key_path=config.get("ssl_key_path", ""),
-        root_mount_id=config.get("root_mount"),
-        access_log=config.get("access_log", True),
-        log_path=config.get("log_path", ""),
+    base = WebDAVConfig(
+        host=manager.status.host,
+        port=manager.status.port,
+        ssl=manager.status.ssl,
+        ssl_cert_path=manager.status.ssl_cert_path,
+        ssl_key_path=manager.status.ssl_key_path,
+        root_mount_id=manager.status.root_mount_id,
+        access_log=manager.status.access_log,
+        log_path=manager.status.log_path,
+        recycle_delete=manager.status.recycle_delete,
     )
+    wconfig = _config_from_dict(config, base)
     status = await manager.update_config(db, wconfig)
-    return {
-        "running": status.running,
-        "host": status.host,
-        "port": status.port,
-        "ssl": status.ssl,
-        "mount_count": status.mount_count,
-        "error": status.error,
-    }
+    return _status_dict(status)

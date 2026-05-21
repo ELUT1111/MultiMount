@@ -7,6 +7,7 @@
     </div>
     <div class="navbar-center">
       <el-input
+        ref="searchInputRef"
         v-model="searchQuery"
         placeholder="搜索文件名..."
         :prefix-icon="Search"
@@ -26,12 +27,25 @@
     </div>
     <div class="navbar-right">
       <el-button class="mobile-search-btn" :icon="Search" circle text @click="showMobileSearch = true" />
-      <!-- 深色/浅色主题切换 -->
-      <el-tooltip :content="isDark ? '切换到浅色模式' : '切换到深色模式'" placement="bottom">
-        <el-icon :size="18" class="theme-toggle" @click="toggleTheme">
-          <component :is="isDark ? Sunny : Moon" />
-        </el-icon>
+      <el-tooltip content="快捷键说明" placement="bottom">
+        <el-button :icon="InfoFilled" circle text aria-label="快捷键说明" @click="showShortcutDialog = true" />
       </el-tooltip>
+      <el-dropdown trigger="click" @command="handleThemeCommand">
+        <el-button class="theme-button" :icon="appPrefs.isDark ? Moon : Sunny" circle text aria-label="主题设置" />
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="system">跟随系统</el-dropdown-item>
+            <el-dropdown-item command="light">浅色主题</el-dropdown-item>
+            <el-dropdown-item command="dark">深色主题</el-dropdown-item>
+            <el-dropdown-item command="contrast" divided>
+              {{ appPrefs.highContrast ? '关闭高对比' : '开启高对比' }}
+            </el-dropdown-item>
+            <el-dropdown-item command="compact">
+              {{ appPrefs.compactMode ? '关闭紧凑模式' : '开启紧凑模式' }}
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <el-tooltip content="所有传输已通过 SSL/TLS 加密" placement="bottom">
         <el-icon class="lock-icon" :size="18"><Lock /></el-icon>
       </el-tooltip>
@@ -106,32 +120,55 @@
         <el-button type="primary" @click="handleSearch">搜索</el-button>
       </div>
     </el-dialog>
+
+    <el-dialog v-model="showShortcutDialog" title="快捷键说明" width="520px" class="responsive-dialog shortcut-dialog">
+      <div class="shortcut-grid">
+        <div v-for="item in shortcutItems" :key="item.keys" class="shortcut-row">
+          <kbd>{{ item.keys }}</kbd>
+          <span>{{ item.desc }}</span>
+        </div>
+      </div>
+    </el-dialog>
   </header>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { FolderOpened, Search, Lock, Bell, Setting, SwitchButton, Sunny, Moon, Warning, CircleCheck, InfoFilled, Filter } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useSearchStore } from '@/stores/search'
+import { useAppStore } from '@/stores/app'
 import { handleNotificationAction } from '@/api/notifications'
 
 const router = useRouter()
 const auth = useAuthStore()
 const notif = useNotificationsStore()
 const search = useSearchStore()
+const appPrefs = useAppStore()
 const searchQuery = ref('')
-const isDark = ref(document.documentElement.classList.contains('dark'))
+const searchInputRef = ref()
 const showMobileSearch = ref(false)
+const showShortcutDialog = ref(false)
 const actingIds = ref(new Set())
 
-function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+const shortcutItems = [
+  { keys: 'Ctrl / Cmd + K', desc: '聚焦全局搜索' },
+  { keys: 'Ctrl / Cmd + A', desc: '在文件浏览器全选当前页' },
+  { keys: 'Shift + ↑ / ↓', desc: '在文件浏览器范围选择' },
+  { keys: 'Ctrl / Cmd + C / X / V', desc: '复制、剪切、粘贴文件' },
+  { keys: 'Enter', desc: '打开目录或预览文件' },
+  { keys: 'Delete', desc: '删除选中项' },
+  { keys: 'Esc', desc: '清空选择或关闭当前弹窗' },
+  { keys: '?', desc: '打开快捷键说明' },
+]
+
+function handleThemeCommand(command) {
+  if (command === 'contrast') appPrefs.toggleHighContrast()
+  else if (command === 'compact') appPrefs.toggleCompactMode()
+  else appPrefs.setTheme(command)
 }
 
 function handleSearch() {
@@ -141,6 +178,33 @@ function handleSearch() {
   showMobileSearch.value = false
   router.push({ path: '/files', query: { q } })
 }
+
+function isTypingTarget(target) {
+  const tag = target?.tagName?.toLowerCase()
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable
+}
+
+function handleGlobalKeydown(event) {
+  const lower = event.key.toLowerCase()
+  if ((event.ctrlKey || event.metaKey) && lower === 'k') {
+    event.preventDefault()
+    searchInputRef.value?.focus?.()
+    return
+  }
+  if (isTypingTarget(event.target)) return
+  if (event.key === '?') {
+    event.preventDefault()
+    showShortcutDialog.value = true
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleGlobalKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
+})
 
 function handleLogout() {
   auth.logout()
@@ -265,14 +329,36 @@ function goToPermDialog(n) {
   font-size: 14px;
   color: var(--text-regular);
 }
-.theme-toggle {
+.theme-button {
   cursor: pointer;
   color: var(--text-regular);
   transition: color 0.2s;
 }
-.theme-toggle:hover { color: var(--primary-color); }
+.theme-button:hover { color: var(--primary-color); }
 .mobile-search-btn { display: none; }
 .mobile-search-box { display: flex; gap: 8px; }
+.shortcut-grid { display: grid; gap: 8px; }
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.shortcut-row kbd {
+  flex: 0 0 auto;
+  min-width: 132px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  text-align: center;
+}
 
 /* 通知面板 */
 .notif-panel { max-height: 400px; display: flex; flex-direction: column; }

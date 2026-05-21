@@ -15,7 +15,13 @@
           <el-form-item label="运行平台"><el-input :value="systemInfo.platform" disabled /></el-form-item>
           <el-form-item label="Python 版本"><el-input :value="systemInfo.python_version?.split(' ')[0]" disabled /></el-form-item>
           <el-form-item label="深色模式">
-            <el-switch v-model="isDark" @change="toggleTheme" active-text="深色" inactive-text="浅色" />
+            <el-switch :model-value="appPrefs.isDark" @change="(val) => appPrefs.setTheme(val ? 'dark' : 'light')" active-text="深色" inactive-text="浅色" />
+          </el-form-item>
+          <el-form-item label="高对比">
+            <el-switch v-model="appPrefs.highContrast" @change="appPrefs.applyPreferences" active-text="开启" inactive-text="关闭" />
+          </el-form-item>
+          <el-form-item label="紧凑模式">
+            <el-switch v-model="appPrefs.compactMode" @change="appPrefs.applyPreferences" active-text="开启" inactive-text="关闭" />
           </el-form-item>
         </el-form>
       </el-tab-pane>
@@ -31,6 +37,14 @@
             <span>{{ httpsConfig.cert_valid ? '证书有效' : '证书未配置' }}</span>
             <span v-if="httpsConfig.cert_expiry" class="cert-expiry">有效期至: {{ httpsConfig.cert_expiry }}</span>
           </div>
+          <el-alert
+            v-if="httpsConfig.cert_expiry_warning"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="inline-alert"
+            :title="`证书将在 ${httpsConfig.cert_days_remaining ?? 0} 天内过期`"
+          />
           <el-divider />
           <el-upload drag action="#" :auto-upload="false" accept=".crt,.pem" :on-change="handleCertUpload">
             <el-icon :size="40"><UploadFilled /></el-icon>
@@ -45,6 +59,17 @@
             <el-switch v-model="httpsConfig.force_https" active-text="强制 HTTPS 跳转" @change="handleHttpsConfigChange" />
             <el-switch v-model="httpsConfig.auto_redirect" active-text="HTTP 自动重定向到 HTTPS" style="margin-top: 12px" @change="handleHttpsConfigChange" />
           </div>
+          <el-divider />
+          <el-collapse>
+            <el-collapse-item title="反向代理配置" name="proxy">
+              <div class="proxy-block">
+                <div class="proxy-title">Nginx</div>
+                <pre>{{ httpsConfig.reverse_proxy?.nginx?.join('\n') }}</pre>
+                <div class="proxy-title">Caddy</div>
+                <pre>{{ httpsConfig.reverse_proxy?.caddy?.join('\n') }}</pre>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
         </el-card>
       </el-tab-pane>
 
@@ -55,6 +80,10 @@
           <div class="webdav-status">
             <StatusBadge :status="webdavRunning ? 'online' : 'offline'" :label="'WebDAV 服务' + (webdavRunning ? '运行中' : '已停止')" />
             <el-switch v-model="webdavRunning" style="margin-left: auto" @change="handleWebdavToggle" />
+          </div>
+          <div class="service-url">
+            <span>访问地址</span>
+            <code>{{ webdavConfig.url }}</code>
           </div>
           <el-divider />
           <el-form label-width="120px" style="margin-top: 12px">
@@ -71,6 +100,9 @@
             <el-form-item label="访问日志">
               <el-switch v-model="webdavConfig.access_log" />
             </el-form-item>
+            <el-form-item label="删除策略">
+              <el-switch v-model="webdavConfig.recycle_delete" active-text="进入回收站" inactive-text="直接删除" />
+            </el-form-item>
             <el-form-item label="日志路径" v-if="webdavConfig.access_log">
               <el-input v-model="webdavConfig.log_path" placeholder="/var/log/webdav/access.log" />
             </el-form-item>
@@ -78,6 +110,12 @@
               <el-button type="primary" @click="handleSaveWebdav">保存配置</el-button>
             </el-form-item>
           </el-form>
+          <el-divider />
+          <div class="permission-map">
+            <el-tag type="info">多根目录按当前登录用户动态展示</el-tag>
+            <el-tag type="success">读操作复用下载/查看权限</el-tag>
+            <el-tag type="warning">写操作复用上传/修改/删除权限</el-tag>
+          </div>
           <el-divider />
           <el-tabs>
             <el-tab-pane label="Windows 连接指南">
@@ -138,18 +176,30 @@ import { ref, reactive, onMounted } from 'vue'
 import { CircleCheckFilled, CircleCloseFilled, UploadFilled, Download } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useMountsStore } from '@/stores/mounts'
+import { useAppStore } from '@/stores/app'
 import { getWebDAVStatus, startWebDAV, stopWebDAV, updateWebDAVConfig } from '@/api/webdav'
 import { getSystemInfo, getHttpsStatus, uploadCert, uploadKey, updateHttpsConfig, getLogs, exportLogs, clearLogs } from '@/api/system'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 
 const mounts = useMountsStore()
+const appPrefs = useAppStore()
 const activeMenu = ref('basic')
 
 // 系统信息
 const systemInfo = reactive({ app_name: 'MultiMount', version: '0.1.0', platform: '', python_version: '' })
 
 // HTTPS
-const httpsConfig = reactive({ cert_valid: false, cert_expiry: '', force_https: false, auto_redirect: true, cert_path: '', key_path: '' })
+const httpsConfig = reactive({
+  cert_valid: false,
+  cert_expiry: '',
+  cert_days_remaining: null,
+  cert_expiry_warning: false,
+  force_https: false,
+  auto_redirect: true,
+  cert_path: '',
+  key_path: '',
+  reverse_proxy: { nginx: [], caddy: [], notes: [] },
+})
 
 async function fetchHttpsStatus() {
   try {
@@ -187,16 +237,25 @@ async function handleHttpsConfigChange() {
   }
 }
 
-// 深色主题
-const isDark = ref(document.documentElement.classList.contains('dark'))
-function toggleTheme(val) { document.documentElement.classList.toggle('dark', val) }
-
 // WebDAV
 const webdavRunning = ref(false)
 const webdavConfig = reactive({
   host: '0.0.0.0', port: 8080, ssl: false, root_mount: '',
   access_log: true, log_path: '/var/log/webdav/access.log',
+  recycle_delete: true, url: 'http://localhost:8080/',
 })
+
+function webdavPayload() {
+  return {
+    host: webdavConfig.host,
+    port: webdavConfig.port,
+    ssl: webdavConfig.ssl,
+    root_mount: webdavConfig.root_mount || null,
+    access_log: webdavConfig.access_log,
+    log_path: webdavConfig.log_path,
+    recycle_delete: webdavConfig.recycle_delete,
+  }
+}
 
 async function fetchWebDAVStatus() {
   try {
@@ -205,13 +264,18 @@ async function fetchWebDAVStatus() {
     webdavConfig.host = status.host || '0.0.0.0'
     webdavConfig.port = status.port || 8080
     webdavConfig.ssl = status.ssl || false
+    webdavConfig.root_mount = status.root_mount || ''
+    webdavConfig.access_log = status.access_log ?? true
+    webdavConfig.log_path = status.log_path || '/var/log/webdav/access.log'
+    webdavConfig.recycle_delete = status.recycle_delete ?? true
+    webdavConfig.url = status.url || `${webdavConfig.ssl ? 'https' : 'http'}://localhost:${webdavConfig.port}/`
   } catch {}
 }
 
 async function handleWebdavToggle(running) {
   try {
     if (running) {
-      await startWebDAV({ host: webdavConfig.host, port: webdavConfig.port, ssl: webdavConfig.ssl, root_mount: webdavConfig.root_mount || null, access_log: webdavConfig.access_log, log_path: webdavConfig.log_path })
+      await startWebDAV(webdavPayload())
       ElMessage.success('WebDAV 服务已启动')
     } else {
       await stopWebDAV()
@@ -226,7 +290,7 @@ async function handleWebdavToggle(running) {
 
 async function handleSaveWebdav() {
   try {
-    await updateWebDAVConfig({ host: webdavConfig.host, port: webdavConfig.port, ssl: webdavConfig.ssl, root_mount: webdavConfig.root_mount || null, access_log: webdavConfig.access_log, log_path: webdavConfig.log_path })
+    await updateWebDAVConfig(webdavPayload())
     ElMessage.success('WebDAV 配置已保存')
     await fetchWebDAVStatus()
   } catch (e) {
@@ -293,10 +357,17 @@ onMounted(async () => {
 .system-settings h2 { font-size: 20px; }
 .cert-status { display: flex; align-items: center; gap: 8px; }
 .cert-expiry { font-size: 12px; color: var(--text-secondary); margin-left: auto; }
+.inline-alert { margin-top: 12px; }
 .https-options { display: flex; flex-direction: column; gap: 4px; }
 .webdav-status { display: flex; align-items: center; gap: 12px; }
-.guide-list { padding-left: 20px; line-height: 2; }
+.service-url { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--text-secondary); }
+.service-url code,
 .guide-list code { background: #f5f7fa; padding: 2px 6px; border-radius: 4px; }
+.permission-map { display: flex; flex-wrap: wrap; gap: 8px; }
+.proxy-block { display: flex; flex-direction: column; gap: 8px; }
+.proxy-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.proxy-block pre { margin: 0; padding: 10px; overflow: auto; border-radius: 6px; background: #f5f7fa; font-size: 12px; line-height: 1.5; }
+.guide-list { padding-left: 20px; line-height: 2; }
 .log-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
 .log-actions { display: flex; gap: 8px; align-items: center; }
 </style>

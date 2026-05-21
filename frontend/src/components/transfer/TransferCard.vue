@@ -1,12 +1,12 @@
 <!--
-  传输任务卡片 — 显示单个任务的详细信息、进度条和操作按钮。
+  传输任务卡片 - 显示单个任务的详细信息、进度条和操作按钮。
 -->
 <template>
   <div class="transfer-card">
     <div class="card-header">
       <div class="task-info">
         <el-tag :type="task.type === 'upload' ? 'primary' : 'success'" size="small">
-          {{ task.type === 'upload' ? '上传' : '下载' }}
+          {{ task.type === 'upload' ? '上传' : task.type === 'download' ? '下载' : task.type === 'copy' ? '复制' : '移动' }}
         </el-tag>
         <span class="file-name">{{ task.file_name }}</span>
       </div>
@@ -25,23 +25,20 @@
       </div>
     </div>
 
-    <!-- 进度条 (仅进行中/暂停时显示) -->
     <TransferProgress
-      v-if="['pending', 'running', 'paused'].includes(task.status)"
+      v-if="['queued', 'pending', 'running', 'paused'].includes(task.status)"
       :transferred="task.transferred"
       :total="task.file_size || 0"
       :speed="task.speed || 0"
       :status="task.status"
     />
 
-    <!-- 错误信息 -->
     <div v-if="task.status === 'failed' && task.error_message" class="error-msg">
       <el-icon><WarningFilled /></el-icon> {{ task.error_message }}
     </div>
 
-    <!-- 操作按钮 -->
     <div class="card-actions">
-      <el-button v-if="task.status === 'running' || task.status === 'pending'" size="small" @click="$emit('pause', task.id)">
+      <el-button v-if="['queued', 'pending', 'running'].includes(task.status)" size="small" @click="$emit('pause', task.id)">
         <el-icon><VideoPause /></el-icon>暂停
       </el-button>
       <el-button v-if="task.status === 'paused'" type="primary" size="small" @click="$emit('resume', task.id)">
@@ -52,7 +49,9 @@
       </el-button>
       <el-button
         v-if="task.status !== 'completed'"
-        type="danger" size="small" plain
+        type="danger"
+        size="small"
+        plain
         @click="$emit('cancel', task.id)"
       >
         取消
@@ -77,11 +76,21 @@ const props = defineProps({
 defineEmits(['pause', 'resume', 'cancel', 'retry'])
 
 const statusTagType = computed(() => ({
-  pending: 'info', running: '', paused: 'warning', completed: 'success', failed: 'danger',
+  queued: 'info',
+  pending: 'info',
+  running: '',
+  paused: 'warning',
+  completed: 'success',
+  failed: 'danger',
 }[props.task.status] || 'info'))
 
 const statusLabel = computed(() => ({
-  pending: '等待中', running: '传输中', paused: '已暂停', completed: '已完成', failed: '已失败',
+  queued: '等待中',
+  pending: '等待中',
+  running: '传输中',
+  paused: '已暂停',
+  completed: '已完成',
+  failed: '已失败',
 }[props.task.status] || props.task.status))
 </script>
 

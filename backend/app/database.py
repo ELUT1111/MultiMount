@@ -40,6 +40,9 @@ async def init_db():
             ("source_mount_id", "INTEGER"),
             ("target_mount_id", "INTEGER"),
             ("conflict_policy", "VARCHAR(16) DEFAULT 'error'"),
+            ("download_limit_bps", "BIGINT"),
+            ("upload_limit_bps", "BIGINT"),
+            ("checkpoint", "JSON"),
         ]
         for column_name, column_type in transfer_columns:
             try:
@@ -47,6 +50,12 @@ async def init_db():
             except Exception:
                 pass
         # 增量迁移: 为 users 表添加 account 列 (如不存在)
+        try:
+            await conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_file_indexes_mount_type ON file_indexes(mount_id, file_type)"))
+            await conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_file_indexes_size ON file_indexes(size)"))
+            await conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_file_indexes_modified_at ON file_indexes(modified_at)"))
+        except Exception:
+            pass
         try:
             await conn.execute(sa.text("ALTER TABLE users ADD COLUMN account VARCHAR(64)"))
             # 回填已有用户的 account (默认使用 username)

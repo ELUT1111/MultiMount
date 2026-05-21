@@ -84,6 +84,33 @@ def upgrade() -> None:
     elif not _has_column(inspector, "notifications", "metadata"):
         op.add_column("notifications", sa.Column("metadata", sa.JSON(), nullable=True))
 
+    if not _has_table(inspector, "file_indexes"):
+        op.create_table(
+            "file_indexes",
+            sa.Column("mount_id", sa.Integer(), sa.ForeignKey("mounts.id"), nullable=False),
+            sa.Column("owner_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
+            sa.Column("mount_name", sa.String(length=128), nullable=False, server_default=""),
+            sa.Column("mount_owner", sa.String(length=64), nullable=False, server_default=""),
+            sa.Column("name", sa.String(length=512), nullable=False),
+            sa.Column("path", sa.Text(), nullable=False),
+            sa.Column("parent_path", sa.Text(), nullable=False, server_default="/"),
+            sa.Column("is_dir", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("size", sa.BigInteger(), nullable=False, server_default="0"),
+            sa.Column("mime_type", sa.String(length=255), nullable=True),
+            sa.Column("extension", sa.String(length=32), nullable=False, server_default=""),
+            sa.Column("file_type", sa.String(length=32), nullable=False, server_default="other"),
+            sa.Column("modified_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("file_created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("indexed_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+            sa.UniqueConstraint("mount_id", "path", name="uq_file_indexes_mount_path"),
+        )
+        op.create_index("ix_file_indexes_mount_type", "file_indexes", ["mount_id", "file_type"])
+        op.create_index("ix_file_indexes_size", "file_indexes", ["size"])
+        op.create_index("ix_file_indexes_modified_at", "file_indexes", ["modified_at"])
+
     if _has_table(inspector, "transfer_tasks"):
         if not _has_column(inspector, "transfer_tasks", "source_mount_id"):
             op.add_column("transfer_tasks", sa.Column("source_mount_id", sa.Integer(), nullable=True))
@@ -94,6 +121,12 @@ def upgrade() -> None:
                 "transfer_tasks",
                 sa.Column("conflict_policy", sa.String(length=16), nullable=False, server_default="error"),
             )
+        if not _has_column(inspector, "transfer_tasks", "download_limit_bps"):
+            op.add_column("transfer_tasks", sa.Column("download_limit_bps", sa.BigInteger(), nullable=True))
+        if not _has_column(inspector, "transfer_tasks", "upload_limit_bps"):
+            op.add_column("transfer_tasks", sa.Column("upload_limit_bps", sa.BigInteger(), nullable=True))
+        if not _has_column(inspector, "transfer_tasks", "checkpoint"):
+            op.add_column("transfer_tasks", sa.Column("checkpoint", sa.JSON(), nullable=True))
 
     if _has_table(inspector, "users") and not _has_column(inspector, "users", "account"):
         op.add_column("users", sa.Column("account", sa.String(length=64), nullable=True))
@@ -110,12 +143,24 @@ def downgrade() -> None:
         op.drop_column("users", "account")
 
     if _has_table(inspector, "transfer_tasks"):
+        if _has_column(inspector, "transfer_tasks", "checkpoint"):
+            op.drop_column("transfer_tasks", "checkpoint")
+        if _has_column(inspector, "transfer_tasks", "upload_limit_bps"):
+            op.drop_column("transfer_tasks", "upload_limit_bps")
+        if _has_column(inspector, "transfer_tasks", "download_limit_bps"):
+            op.drop_column("transfer_tasks", "download_limit_bps")
         if _has_column(inspector, "transfer_tasks", "conflict_policy"):
             op.drop_column("transfer_tasks", "conflict_policy")
         if _has_column(inspector, "transfer_tasks", "target_mount_id"):
             op.drop_column("transfer_tasks", "target_mount_id")
         if _has_column(inspector, "transfer_tasks", "source_mount_id"):
             op.drop_column("transfer_tasks", "source_mount_id")
+
+    if _has_table(inspector, "file_indexes"):
+        op.drop_index("ix_file_indexes_modified_at", table_name="file_indexes")
+        op.drop_index("ix_file_indexes_size", table_name="file_indexes")
+        op.drop_index("ix_file_indexes_mount_type", table_name="file_indexes")
+        op.drop_table("file_indexes")
 
     if _has_table(inspector, "notifications") and _has_column(inspector, "notifications", "metadata"):
         op.drop_column("notifications", "metadata")

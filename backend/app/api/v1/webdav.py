@@ -24,6 +24,7 @@ class WebDAVStartRequest(BaseModel):
     root_mount: int | None = None
     access_log: bool = True
     log_path: str = ""
+    recycle_delete: bool = True
 
 
 class WebDAVConfigRequest(BaseModel):
@@ -36,6 +37,7 @@ class WebDAVConfigRequest(BaseModel):
     root_mount: int | None = None
     access_log: bool | None = None
     log_path: str | None = None
+    recycle_delete: bool | None = None
 
 
 @router.get("/status")

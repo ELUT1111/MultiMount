@@ -89,7 +89,7 @@ const { data: wsData, connected: wsConnected, connect: wsConnect } = useWebSocke
 )
 
 // 计数
-const runningCount = computed(() => transfers.tasks.filter((t) => ['pending', 'running', 'paused'].includes(t.status)).length)
+const runningCount = computed(() => transfers.tasks.filter((t) => ['queued', 'pending', 'running', 'paused'].includes(t.status)).length)
 const completedCount = computed(() => transfers.tasks.filter((t) => t.status === 'completed').length)
 const failedCount = computed(() => transfers.tasks.filter((t) => t.status === 'failed').length)
 
@@ -124,7 +124,7 @@ async function handleBatchResume() {
 // 批量取消 (并行执行)
 async function handleBatchCancel() {
   await ElMessageBox.confirm('确定取消所有进行中的任务?', '确认', { type: 'warning' })
-  const active = transfers.tasks.filter((t) => ['pending', 'running', 'paused'].includes(t.status))
+  const active = transfers.tasks.filter((t) => ['queued', 'pending', 'running', 'paused'].includes(t.status))
   await Promise.allSettled(active.map((t) => transfers.cancelTask(t.id)))
   ElMessage.success('已全部取消')
 }

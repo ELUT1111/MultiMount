@@ -9,8 +9,8 @@ import tempfile
 import zipfile
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Request, UploadFile, File as FastAPIFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,7 @@ from app.schemas.file import (
     MultipartUploadInit,
     MultipartUploadInitOut,
 )
-from app.services import file_service, operation_log_service, upload_session_service
+from app.services import file_service, operation_log_service, preview_service, upload_session_service
 from app.utils.path_utils import normalize_path, safe_upload_filename
 
 router = APIRouter()
@@ -38,10 +38,38 @@ router = APIRouter()
 def _download_headers(filename: str, size: int | None) -> dict[str, str]:
     headers = {
         "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}",
+        "Accept-Ranges": "bytes",
     }
     if size is not None:
         headers["Content-Length"] = str(size)
     return headers
+
+
+def _parse_range_header(range_header: str | None, size: int | None) -> tuple[int, int] | None:
+    if not range_header:
+        return None
+    if size is None:
+        raise HTTPException(status_code=416, detail="Range not satisfiable")
+    if not range_header.startswith("bytes=") or "," in range_header:
+        raise HTTPException(status_code=416, detail="Range not satisfiable")
+
+    start_text, _, end_text = range_header[6:].partition("-")
+    try:
+        if start_text:
+            start = int(start_text)
+            end = int(end_text) if end_text else size - 1
+        else:
+            suffix = int(end_text)
+            if suffix <= 0:
+                raise ValueError
+            start = max(size - suffix, 0)
+            end = size - 1
+    except ValueError:
+        raise HTTPException(status_code=416, detail="Range not satisfiable")
+
+    if start >= size or end < start:
+        raise HTTPException(status_code=416, detail="Range not satisfiable")
+    return start, min(end, size - 1)
 
 
 @router.get("/{mount_id}/list", response_model=list[FileInfoOut])
@@ -84,6 +112,39 @@ async def get_file_info(
     )
 
 
+@router.get("/{mount_id}/thumbnail")
+async def get_thumbnail(
+    mount_id: int,
+    path: str = Query(..., description="文件路径"),
+    _user=Depends(require_file_action("info")),
+    db: AsyncSession = Depends(get_db),
+):
+    data, media_type = await preview_service.thumbnail_bytes(db, mount_id, path)
+    return Response(content=data, media_type=media_type, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@router.get("/{mount_id}/preview/meta")
+async def get_preview_meta(
+    mount_id: int,
+    path: str = Query(..., description="文件路径"),
+    _user=Depends(require_file_action("info")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await preview_service.preview_meta(db, mount_id, path)
+
+
+@router.get("/{mount_id}/preview/text")
+async def get_text_preview(
+    mount_id: int,
+    path: str = Query(..., description="文件路径"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(65536, ge=1, le=262144),
+    _user=Depends(require_file_action("download")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await preview_service.text_preview(db, mount_id, path, offset, limit)
+
+
 @router.get("/{mount_id}/download")
 async def download_file(
     request: Request,
@@ -96,10 +157,16 @@ async def download_file(
     info = await file_service.get_info(db, mount_id, path)
     mime = info.mime_type or "application/octet-stream"
     filename = info.name
+    byte_range = _parse_range_header(request.headers.get("range"), info.size)
 
     async def stream_with_db():
-        async for chunk in file_service.download_file(db, mount_id, path):
-            yield chunk
+        if byte_range is None:
+            async for chunk in file_service.download_file(db, mount_id, path):
+                yield chunk
+        else:
+            start, end = byte_range
+            async for chunk in file_service.download_file_range(db, mount_id, path, start, end):
+                yield chunk
 
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
@@ -113,11 +180,15 @@ async def download_file(
         detail={"size": info.size, "name": filename},
     )
 
-    return StreamingResponse(
-        stream_with_db(),
-        media_type=mime,
-        headers=_download_headers(filename, info.size),
-    )
+    headers = _download_headers(filename, info.size)
+    status_code = 200
+    if byte_range is not None:
+        start, end = byte_range
+        headers["Content-Range"] = f"bytes {start}-{end}/{info.size}"
+        headers["Content-Length"] = str(end - start + 1)
+        status_code = 206
+
+    return StreamingResponse(stream_with_db(), media_type=mime, headers=headers, status_code=status_code)
 
 
 @router.post("/batch-download")

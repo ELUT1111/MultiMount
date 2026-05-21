@@ -117,6 +117,42 @@ async def download_file(db: AsyncSession, mount_id: int, path: str) -> AsyncIter
         raise BadRequestException(f"下载失败: {e}")
 
 
+async def download_file_range(
+    db: AsyncSession,
+    mount_id: int,
+    path: str,
+    start: int = 0,
+    end: int | None = None,
+) -> AsyncIterator[bytes]:
+    """Stream a byte range without buffering the whole file in memory."""
+    if start < 0 or (end is not None and end < start):
+        raise BadRequestException("无效的 Range 请求")
+
+    skipped = 0
+    emitted = 0
+    limit = None if end is None else end - start + 1
+
+    async for chunk in download_file(db, mount_id, path):
+        if skipped < start:
+            skip = min(start - skipped, len(chunk))
+            chunk = chunk[skip:]
+            skipped += skip
+            if not chunk:
+                continue
+
+        if limit is not None:
+            remaining = limit - emitted
+            if remaining <= 0:
+                break
+            chunk = chunk[:remaining]
+
+        emitted += len(chunk)
+        yield chunk
+
+        if limit is not None and emitted >= limit:
+            break
+
+
 async def upload_file(db: AsyncSession, mount_id: int, path: str,
                       data: AsyncIterator[bytes], size: int | None = None,
                       conflict_policy: str = "error") -> FileInfo:
@@ -128,7 +164,10 @@ async def upload_file(db: AsyncSession, mount_id: int, path: str,
     try:
         await adapter.connect()
         await adapter.upload(path, data, size)
-        return await adapter.get_info(path)
+        info = await adapter.get_info(path)
+        from app.services import search_service
+        await search_service.refresh_path_index(db, mount_id, path, recursive=False)
+        return info
     except Exception as e:
         logger.error("upload 失败 mount=%d path=%s: %s", mount_id, path, e)
         raise BadRequestException(f"上传失败: {e}")
@@ -143,6 +182,8 @@ async def delete_file_permanently(db: AsyncSession, mount_id: int, path: str) ->
     try:
         await adapter.connect()
         await adapter.delete(path)
+        from app.services import search_service
+        await search_service.remove_path_index(db, mount_id, path)
     except FileNotFoundError:
         raise NotFoundException(f"文件不存在: {path}")
     except Exception as e:
@@ -155,6 +196,8 @@ async def delete_file(db: AsyncSession, mount_id: int, path: str, user=None) -> 
     from app.services import trash_service
 
     await trash_service.trash_file(db, mount_id, path, user=user)
+    from app.services import search_service
+    await search_service.remove_path_index(db, mount_id, path)
 
 
 async def make_directory(db: AsyncSession, mount_id: int, path: str) -> FileInfo:
@@ -164,7 +207,10 @@ async def make_directory(db: AsyncSession, mount_id: int, path: str) -> FileInfo
     try:
         await adapter.connect()
         await adapter.mkdir(path)
-        return await adapter.get_info(path)
+        info = await adapter.get_info(path)
+        from app.services import search_service
+        await search_service.refresh_path_index(db, mount_id, path, recursive=False)
+        return info
     except Exception as e:
         logger.error("mkdir 失败 mount=%d path=%s: %s", mount_id, path, e)
         raise BadRequestException(f"创建目录失败: {e}")
@@ -182,7 +228,11 @@ async def move_file(db: AsyncSession, mount_id: int, src: str, dst: str,
     try:
         await adapter.connect()
         await adapter.move(src, dst)
-        return await adapter.get_info(dst)
+        info = await adapter.get_info(dst)
+        from app.services import search_service
+        await search_service.remove_path_index(db, mount_id, src)
+        await search_service.refresh_path_index(db, mount_id, dst)
+        return info
     except FileNotFoundError:
         raise NotFoundException(f"源文件不存在: {src}")
     except Exception as e:
@@ -202,7 +252,10 @@ async def copy_file(db: AsyncSession, mount_id: int, src: str, dst: str,
     try:
         await adapter.connect()
         await adapter.copy(src, dst)
-        return await adapter.get_info(dst)
+        info = await adapter.get_info(dst)
+        from app.services import search_service
+        await search_service.refresh_path_index(db, mount_id, dst)
+        return info
     except FileNotFoundError:
         raise NotFoundException(f"源文件不存在: {src}")
     except Exception as e:

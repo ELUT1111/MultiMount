@@ -94,6 +94,8 @@ async def create_task(
         source_mount_id=body.source_mount_id,
         target_mount_id=body.target_mount_id,
         conflict_policy=body.conflict_policy,
+        download_limit_kbps=body.download_limit_kbps,
+        upload_limit_kbps=body.upload_limit_kbps,
     )
 
 

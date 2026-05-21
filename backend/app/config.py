@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     # Fernet 加密密钥 (用于加密挂载配置中的密码等敏感字段)
     ENCRYPTION_KEY: str = ""
 
+    # Transfer QoS
+    TRANSFER_MAX_CONCURRENT_GLOBAL: int = 4
+    TRANSFER_MAX_CONCURRENT_PER_USER: int = 2
+    TRANSFER_MAX_CONCURRENT_PER_MOUNT: int = 2
+    TRANSFER_DEFAULT_DOWNLOAD_LIMIT_KBPS: int = 0
+    TRANSFER_DEFAULT_UPLOAD_LIMIT_KBPS: int = 0
+
+    # Search and preview
+    SEARCH_INDEX_REFRESH_INTERVAL_SECONDS: int = 3600
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +13,22 @@ from app.core.middleware import register_middleware
 from app.database import init_db
 
 settings = get_settings()
+
+
+async def _search_index_refresh_loop(logger) -> None:
+    from app.database import async_session_factory
+    from app.services.search_service import refresh_all_indexes
+
+    while True:
+        await asyncio.sleep(settings.SEARCH_INDEX_REFRESH_INTERVAL_SECONDS)
+        try:
+            async with async_session_factory() as db:
+                summary = await refresh_all_indexes(db)
+            logger.info("搜索索引定时刷新完成: %s", summary)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("搜索索引定时刷新失败: %s", exc)
 
 
 def _validate_security_config() -> None:
@@ -48,6 +65,7 @@ async def lifespan(_app: FastAPI):
     # 初始化默认角色和管理员用户
     from app.services.auth_service import seed_default_roles, seed_admin_user
     from app.services.ip_blacklist_service import init_cache
+    from app.services.transfer_service import recover_unfinished_tasks
     from app.database import async_session_factory
 
     async with async_session_factory() as db:
@@ -57,6 +75,12 @@ async def lifespan(_app: FastAPI):
         await init_cache(db)
     logger.info("默认角色和管理员用户初始化完成")
 
+    recovered = await recover_unfinished_tasks()
+    if recovered:
+        logger.info("已恢复 %d 个未完成传输任务", recovered)
+
+    search_index_task = asyncio.create_task(_search_index_refresh_loop(logger))
+
     # 安全警告
     if settings.JWT_SECRET_KEY in ("CHANGE_ME_TO_A_RANDOM_SECRET_KEY", "multimount-dev-secret-key-change-in-production"):
         logger.warning("⚠ JWT_SECRET_KEY 使用默认值, 请在 .env 中设置随机密钥!")
@@ -65,7 +89,14 @@ async def lifespan(_app: FastAPI):
     if settings.DEBUG:
         logger.warning("⚠ DEBUG=True, 生产环境请设置 DEBUG=False")
 
-    yield
+    try:
+        yield
+    finally:
+        search_index_task.cancel()
+        try:
+            await search_index_task
+        except asyncio.CancelledError:
+            pass
 
     logger.info("MultiMount 正在关闭...")
 

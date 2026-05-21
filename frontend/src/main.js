@@ -8,16 +8,16 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 import './styles/global.css'
-
-const savedTheme = localStorage.getItem('theme')
-const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches
-document.documentElement.classList.toggle('dark', savedTheme ? savedTheme === 'dark' : prefersDark)
+import { useAppStore } from './stores/app'
 
 const app = createApp(App)
+const pinia = createPinia()
 
-app.use(createPinia())
+app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
+
+useAppStore().applyPreferences()
 
 // 注册所有 Element Plus 图标
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {

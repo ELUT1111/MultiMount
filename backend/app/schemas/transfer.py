@@ -20,6 +20,9 @@ class TransferTaskOut(BaseModel):
     transferred: int
     chunk_size: int
     speed: float | None
+    download_limit_bps: int | None = None
+    upload_limit_bps: int | None = None
+    checkpoint: dict | None = None
     error_message: str | None
     created_at: datetime
     updated_at: datetime
@@ -37,3 +40,5 @@ class TransferCreateRequest(BaseModel):
     file_name: str
     file_size: int | None = None
     conflict_policy: Literal["error", "overwrite", "skip", "rename"] = "error"
+    download_limit_kbps: int | None = None
+    upload_limit_kbps: int | None = None

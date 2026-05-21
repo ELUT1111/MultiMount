@@ -4,6 +4,17 @@
 import { defineStore } from 'pinia'
 import { listFiles } from '@/api/files'
 
+const SORT_STORAGE_KEY = 'mounthubFileSortRules'
+
+function loadSortRules() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SORT_STORAGE_KEY) || '[]')
+    return Array.isArray(saved) ? saved : []
+  } catch {
+    return []
+  }
+}
+
 export const useFilesStore = defineStore('files', {
   state: () => ({
     currentMountId: null,   // 当前挂载点 ID
@@ -12,8 +23,9 @@ export const useFilesStore = defineStore('files', {
     selectedFile: null,     // 右侧详情面板选中的文件
     viewMode: 'list',       // list | grid
     sortBy: 'name',         // 兼容旧入口: name | size | modified
-    sortRules: [],
+    sortRules: loadSortRules(),
     loading: false,
+    error: '',
     page: 1,                // 当前页码
     pageSize: 100,          // 每页数量
   }),
@@ -43,10 +55,12 @@ export const useFilesStore = defineStore('files', {
       this.currentMountId = mountId
       this.currentPath = path
       this.page = 1
+      this.error = ''
       try {
         this.files = await listFiles(mountId, path)
-      } catch {
+      } catch (e) {
         this.files = []
+        this.error = e.response?.data?.detail || '文件列表加载失败'
       } finally {
         this.loading = false
       }
@@ -75,6 +89,7 @@ export const useFilesStore = defineStore('files', {
       this.sortBy = field
       const normalized = field === 'modified' ? 'modified_at' : field
       this.sortRules = [{ field: normalized, direction: 'asc' }]
+      this.persistSortRules()
       this.page = 1
     },
 
@@ -85,12 +100,18 @@ export const useFilesStore = defineStore('files', {
       } else {
         this.sortRules.push({ field, direction: 'asc' })
       }
+      this.persistSortRules()
       this.page = 1
     },
 
     removeSortField(field) {
       this.sortRules = this.sortRules.filter((rule) => rule.field !== field)
+      this.persistSortRules()
       this.page = 1
+    },
+
+    persistSortRules() {
+      localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(this.sortRules))
     },
 
     getSortRule(field) {
