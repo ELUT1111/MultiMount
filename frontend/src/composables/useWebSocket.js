@@ -10,8 +10,29 @@ export function useWebSocket(url, options = {}) {
   const connected = ref(false)
   let ws = null
   let reconnectTimer = null
+  let heartbeatTimer = null
+  let shouldReconnect = autoReconnect
+
+  function clearReconnectTimer() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+  }
+
+  function clearHeartbeatTimer() {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer)
+      heartbeatTimer = null
+    }
+  }
 
   function connect() {
+    if (ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(ws.readyState)) return
+
+    shouldReconnect = autoReconnect
+    clearReconnectTimer()
+
     // 通过 Sec-WebSocket-Protocol 传递 token (避免 token 出现在 URL/日志中)
     const token = localStorage.getItem('access_token')
     ws = token
@@ -21,8 +42,8 @@ export function useWebSocket(url, options = {}) {
     ws.onopen = () => {
       connected.value = true
       // 启动心跳 (每 30 秒)
-      if (ws._heartbeat) clearInterval(ws._heartbeat)
-      ws._heartbeat = setInterval(() => {
+      clearHeartbeatTimer()
+      heartbeatTimer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send('ping')
       }, 30000)
     }
@@ -38,9 +59,10 @@ export function useWebSocket(url, options = {}) {
 
     ws.onclose = () => {
       connected.value = false
-      if (ws._heartbeat) clearInterval(ws._heartbeat)
+      clearHeartbeatTimer()
+      ws = null
       // 自动重连
-      if (autoReconnect) {
+      if (shouldReconnect) {
         reconnectTimer = setTimeout(connect, reconnectInterval)
       }
     }
@@ -51,11 +73,14 @@ export function useWebSocket(url, options = {}) {
   }
 
   function disconnect() {
-    if (reconnectTimer) clearTimeout(reconnectTimer)
+    shouldReconnect = false
+    clearReconnectTimer()
+    clearHeartbeatTimer()
     if (ws) {
       ws.close()
       ws = null
     }
+    connected.value = false
   }
 
   // 组件卸载时自动断开

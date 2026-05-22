@@ -34,6 +34,10 @@ async def init_db():
             await conn.execute(sa.text("ALTER TABLE notifications ADD COLUMN metadata JSON"))
         except Exception:
             pass  # 列已存在则忽略
+        try:
+            await conn.execute(sa.text("ALTER TABLE notifications ADD COLUMN is_archived BOOLEAN DEFAULT 0"))
+        except Exception:
+            pass  # 列已存在则忽略
 
         # 增量迁移: 为 transfer_tasks 增加跨挂载传输与冲突策略字段
         transfer_columns = [
@@ -71,12 +75,16 @@ async def init_db():
 
 async def get_db() -> AsyncSession:
     """FastAPI 依赖注入: 获取数据库会话"""
+    from app.services import notification_service
+
     async with async_session_factory() as session:
         try:
             yield session
             await session.commit()
+            await notification_service.flush_queued_pushes(session)
         except Exception:
             await session.rollback()
+            notification_service.clear_queued_pushes(session)
             raise
         finally:
             await session.close()

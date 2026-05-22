@@ -75,6 +75,7 @@ def upgrade() -> None:
             sa.Column("title", sa.String(length=256), nullable=False),
             sa.Column("content", sa.Text(), nullable=False),
             sa.Column("is_read", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("is_archived", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("related_id", sa.Integer(), nullable=True),
             sa.Column("metadata", sa.JSON(), nullable=True),
             sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -83,6 +84,11 @@ def upgrade() -> None:
         )
     elif not _has_column(inspector, "notifications", "metadata"):
         op.add_column("notifications", sa.Column("metadata", sa.JSON(), nullable=True))
+    if _has_table(inspector, "notifications") and not _has_column(inspector, "notifications", "is_archived"):
+        op.add_column(
+            "notifications",
+            sa.Column("is_archived", sa.Boolean(), nullable=False, server_default=sa.false()),
+        )
 
     if not _has_table(inspector, "file_indexes"):
         op.create_table(
@@ -162,8 +168,11 @@ def downgrade() -> None:
         op.drop_index("ix_file_indexes_mount_type", table_name="file_indexes")
         op.drop_table("file_indexes")
 
-    if _has_table(inspector, "notifications") and _has_column(inspector, "notifications", "metadata"):
-        op.drop_column("notifications", "metadata")
+    if _has_table(inspector, "notifications"):
+        if _has_column(inspector, "notifications", "is_archived"):
+            op.drop_column("notifications", "is_archived")
+        if _has_column(inspector, "notifications", "metadata"):
+            op.drop_column("notifications", "metadata")
 
     if _has_table(inspector, "trash_items"):
         op.drop_index("ix_trash_items_deleted_at", table_name="trash_items")

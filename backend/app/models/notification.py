@@ -12,6 +12,7 @@ class Notification(BaseModel):
     title: Mapped[str] = mapped_column(String(256), nullable=False, comment="通知标题")
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="通知内容")
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否已读")
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否已归档")
     related_id: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="关联 ID (挂载/角色)")
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True, comment="通知元数据 (可执行通知的操作参数)")
 

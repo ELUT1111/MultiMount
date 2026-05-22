@@ -2,8 +2,9 @@
 通知 API — WebSocket 推送 + REST 查询/标记已读 + 可执行通知处理。
 """
 import logging
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,24 +65,36 @@ async def notification_ws(websocket: WebSocket):
 @router.get("")
 async def list_notifications(
     unread_only: bool = False,
+    type: str | None = Query(default=None),
+    pending_only: bool = False,
+    include_archived: bool = False,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取当前用户的通知列表"""
-    notifs = await notification_service.get_notifications(db, user.id, unread_only)
-    return [
-        {
-            "id": n.id,
-            "type": n.type,
-            "title": n.title,
-            "content": n.content,
-            "is_read": n.is_read,
-            "related_id": n.related_id,
-            "metadata": n.metadata_,
-            "created_at": n.created_at.isoformat(),
-        }
-        for n in notifs
-    ]
+    return await notification_service.get_notifications(
+        db,
+        user.id,
+        unread_only=unread_only,
+        notification_type=type,
+        pending_only=pending_only,
+        include_archived=include_archived,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/types")
+async def list_notification_types(
+    include_archived: bool = False,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取当前用户已有的通知类型"""
+    types = await notification_service.list_notification_types(db, user.id, include_archived)
+    return {"types": types}
 
 
 @router.get("/unread-count")
@@ -94,6 +107,16 @@ async def unread_count(
     return {"unread_count": count}
 
 
+@router.put("/read-all")
+async def mark_all_read(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """标记所有通知为已读"""
+    unread_count = await notification_service.mark_all_read(db, user.id)
+    return {"ok": True, "unread_count": unread_count}
+
+
 @router.put("/{notification_id}/read")
 async def mark_read(
     notification_id: int,
@@ -101,24 +124,36 @@ async def mark_read(
     db: AsyncSession = Depends(get_db),
 ):
     """标记单条通知为已读"""
-    await notification_service.mark_read(db, notification_id, user.id)
-    return {"ok": True}
+    unread_count = await notification_service.mark_read(db, notification_id, user.id)
+    return {"ok": True, "unread_count": unread_count}
 
 
-@router.put("/read-all")
-async def mark_all_read(
+@router.put("/{notification_id}/archive")
+async def archive_notification(
+    notification_id: int,
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """标记所有通知为已读"""
-    await notification_service.mark_all_read(db, user.id)
-    return {"ok": True}
+    """归档单条通知"""
+    unread_count = await notification_service.archive_notification(db, notification_id, user.id)
+    return {"ok": True, "unread_count": unread_count}
+
+
+@router.delete("/{notification_id}")
+async def delete_notification(
+    notification_id: int,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除单条通知"""
+    unread_count = await notification_service.delete_notification(db, notification_id, user.id)
+    return {"ok": True, "unread_count": unread_count}
 
 
 # ── 可执行通知处理 ──────────────────────────────────────────
 
 class NotificationAction(BaseModel):
-    action: str  # "approve" | "deny"
+    action: Literal["approve", "deny"]
 
 
 @router.post("/{notification_id}/action")
@@ -154,29 +189,50 @@ async def handle_notification_action(
     if not requester_id or not requested_level or not mount_id:
         raise HTTPException(status_code=400, detail="通知数据不完整")
 
-    if body.action == "approve":
-        # 校验当前用户是挂载所有者或管理员
-        is_admin = user.role and user.role.name == "admin"
-        if not is_admin:
-            mount = await get_mount(db, mount_id)
-            if mount.user_id != user.id:
-                raise HTTPException(status_code=403, detail="仅挂载所有者可审批")
+    if meta.get("action_status") in {"approved", "denied"}:
+        raise HTTPException(status_code=400, detail="该通知已处理")
 
+    # 校验当前用户是挂载所有者或管理员
+    is_admin = user.role and user.role.name == "admin"
+    mount = await get_mount(db, mount_id)
+    if not is_admin and mount.user_id != user.id:
+        raise HTTPException(status_code=403, detail="仅挂载所有者可审批")
+
+    if body.action == "approve":
         # 授予权限
         await mount_permission_service.grant_permission(
             db, mount_id, requester_id, requested_level, granted_by=user.id,
         )
         # 通知申请人
-        mount = await get_mount(db, mount_id)
         await notification_service.create_notification(
             db, requester_id,
             "permission_granted", "权限授予",
             f"您的权限申请已通过，您已被授予挂载 \"{mount.name}\" 的 {requested_level} 权限。",
             related_id=mount_id,
         )
+        action_status = "approved"
+        action_label = "已同意"
+    else:
+        await notification_service.create_notification(
+            db, requester_id,
+            "permission_denied", "权限申请被拒绝",
+            f"您对挂载 \"{mount.name}\" 的 {requested_level} 权限申请已被拒绝。",
+            related_id=mount_id,
+        )
+        action_status = "denied"
+        action_label = "已拒绝"
+
+    notif.metadata_ = {
+        **meta,
+        "action_status": action_status,
+        "action_by": user.id,
+    }
+    await db.flush()
+    await db.refresh(notif)
 
     # 标记通知已读
-    await notification_service.mark_read(db, notification_id, user.id)
+    unread_count = await notification_service.mark_read(db, notification_id, user.id)
+    await db.refresh(notif)
+    await notification_service.queue_notification_update(db, user.id, notif)
 
-    action_label = "已同意" if body.action == "approve" else "已拒绝"
-    return {"message": f"权限申请{action_label}"}
+    return {"message": f"权限申请{action_label}", "unread_count": unread_count}
