@@ -32,8 +32,16 @@
         <span class="webdav-label">WebDAV 服务</span>
         <el-switch v-model="webdavRunning" size="small" :loading="webdavLoading" @change="toggleWebDAV" />
       </div>
-      <el-button type="primary" size="small" plain style="width:100%" @click="$router.push('/mounts')">
-        <el-icon><Plus /></el-icon>快速连接
+      <el-button
+        type="primary"
+        size="small"
+        plain
+        style="width:100%"
+        :loading="testingOwnMounts"
+        :disabled="ownMounts.length === 0"
+        @click="testOwnMounts"
+      >
+        <el-icon><Connection /></el-icon>快速测试连接
       </el-button>
     </div>
   </aside>
@@ -43,7 +51,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Delete, FolderOpened, Connection, User, Upload, Setting, Plus, Monitor, Cloudy, DataLine, Share } from '@element-plus/icons-vue'
+import { Delete, FolderOpened, Connection, User, Upload, Setting, Monitor, Cloudy, DataLine, Share } from '@element-plus/icons-vue'
 import { useMountsStore } from '@/stores/mounts'
 import { useFilesStore } from '@/stores/files'
 import { useAuthStore } from '@/stores/auth'
@@ -60,6 +68,7 @@ const files = useFilesStore()
 const auth = useAuthStore()
 const webdavRunning = ref(false)
 const webdavLoading = ref(false)
+const testingOwnMounts = ref(false)
 const currentPath = computed(() => route.path)
 
 // 所有菜单项 (adminOnly 标记的仅管理员可见)
@@ -93,6 +102,45 @@ const groupedMounts = computed(() => {
   }
   return typeOrder.filter((t) => map[t]).map((t) => ({ type: t, label: typeLabels[t] || t, items: map[t] }))
 })
+
+const ownMounts = computed(() => {
+  const userId = auth.user?.id
+  if (!userId) return []
+  return mounts.mounts.filter((m) => m.user_id === userId)
+})
+
+async function testOwnMounts() {
+  if (testingOwnMounts.value) return
+
+  if (!mounts.loaded) {
+    await mounts.fetchMounts()
+  }
+
+  if (ownMounts.value.length === 0) {
+    ElMessage.warning('暂无自己的挂载点可测试')
+    return
+  }
+
+  testingOwnMounts.value = true
+  try {
+    const results = await Promise.allSettled(
+      ownMounts.value.map(async (mount) => {
+        const result = await mounts.testMount(mount.id)
+        return { mount, result }
+      })
+    )
+    const successCount = results.filter((item) => item.status === 'fulfilled' && item.value.result.success).length
+    const failedCount = results.length - successCount
+
+    if (failedCount === 0) {
+      ElMessage.success(`已完成 ${successCount} 个挂载点测试，全部连接成功`)
+    } else {
+      ElMessage.warning(`已完成 ${results.length} 个挂载点测试，成功 ${successCount} 个，失败 ${failedCount} 个`)
+    }
+  } finally {
+    testingOwnMounts.value = false
+  }
+}
 
 async function toggleWebDAV(running) {
   webdavLoading.value = true

@@ -708,6 +708,19 @@ function isTypingTarget(target) {
   return tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable
 }
 
+function isVisibleElement(element) {
+  if (!element) return false
+  const style = window.getComputedStyle(element)
+  return style.display !== 'none'
+    && style.visibility !== 'hidden'
+    && element.getClientRects().length > 0
+}
+
+function hasActiveOverlay() {
+  return [...document.querySelectorAll('.el-overlay-dialog, .el-overlay-message-box')]
+    .some(isVisibleElement)
+}
+
 function focusedIndex() {
   const items = displayFiles.value
   const key = focusedFileKey.value || fileKey(files.selectedFile) || fileKey(selectedFiles.value.at(-1))
@@ -729,7 +742,7 @@ function moveFocus(delta, extendSelection = false) {
 }
 
 function handleFileBrowserKeydown(event) {
-  if (document.querySelector('.el-overlay-dialog, .el-overlay-message-box')) return
+  if (hasActiveOverlay()) return
   if (isTypingTarget(event.target)) return
 
   if (!displayFiles.value.length) return
@@ -1254,7 +1267,7 @@ watch(() => displayFiles.value.map(fileKey).join('|'), () => {
 
 // 初始化: 默认加载第一个挂载点 (非搜索模式)
 onMounted(async () => {
-  window.addEventListener('keydown', handleFileBrowserKeydown)
+  window.addEventListener('keydown', handleFileBrowserKeydown, true)
   await mounts.fetchMounts()
   if (!route.query.q && mounts.accessibleMounts.length > 0) {
     files.fetchFiles(mounts.accessibleMounts[0].id, '/')
@@ -1262,7 +1275,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleFileBrowserKeydown)
+  window.removeEventListener('keydown', handleFileBrowserKeydown, true)
 })
 </script>
 

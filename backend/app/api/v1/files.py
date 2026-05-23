@@ -9,15 +9,21 @@ import tempfile
 import zipfile
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
-from app.database import get_db
+from app.database import async_session_factory, get_db
 from app.dependencies import get_current_user
+from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.policy import enforce_file_policy
 from app.core.mount_permissions import require_file_action
+from app.core.security import decode_token
+from app.models.user import User
 from app.schemas.file import (
     BatchFileRequest,
     BatchFileResponse,
@@ -29,10 +35,11 @@ from app.schemas.file import (
     MultipartUploadInit,
     MultipartUploadInitOut,
 )
-from app.services import file_service, operation_log_service, preview_service, upload_session_service
+from app.services import file_service, mount_service, operation_log_service, preview_service, upload_session_service
 from app.utils.path_utils import normalize_path, safe_upload_filename
 
 router = APIRouter()
+download_security_scheme = HTTPBearer()
 
 
 def _download_headers(filename: str, size: int | None) -> dict[str, str]:
@@ -70,6 +77,24 @@ def _parse_range_header(range_header: str | None, size: int | None) -> tuple[int
     if start >= size or end < start:
         raise HTTPException(status_code=416, detail="Range not satisfiable")
     return start, min(end, size - 1)
+
+
+async def _get_download_user(credentials: HTTPAuthorizationCredentials, db: AsyncSession) -> User:
+    payload = decode_token(credentials.credentials)
+    if payload is None or payload.get("type") != "access":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的访问令牌")
+
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的令牌载荷")
+
+    result = await db.execute(
+        select(User).options(selectinload(User.role)).where(User.id == int(user_id))
+    )
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已禁用")
+    return user
 
 
 @router.get("/{mount_id}/list", response_model=list[FileInfoOut])
@@ -150,35 +175,59 @@ async def download_file(
     request: Request,
     mount_id: int,
     path: str = Query(..., description="文件路径"),
-    current_user=Depends(require_file_action("download")),
-    db: AsyncSession = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials = Depends(download_security_scheme),
 ):
-    """流式下载文件 — 使用 StreamingResponse 逐块返回, 支持大文件"""
-    info = await file_service.get_info(db, mount_id, path)
+    """流式下载文件 — 支持大文件和 Range, 传输期间不持有 DB 连接。"""
+    path = normalize_path(path)
+
+    async with async_session_factory() as db:
+        adapter = None
+        try:
+            current_user = await _get_download_user(credentials, db)
+            await enforce_file_policy(db, current_user, mount_id, "download")
+            _, adapter = await mount_service.get_adapter_for_mount(db, mount_id)
+            await adapter.connect()
+            try:
+                info = await adapter.get_info(path)
+            except FileNotFoundError:
+                raise NotFoundException(f"文件不存在: {path}")
+            except Exception as exc:
+                raise BadRequestException(f"获取文件信息失败: {exc}") from exc
+
+            byte_range = _parse_range_header(request.headers.get("range"), info.size)
+
+            ip, user_agent = operation_log_service.request_context(request)
+            await operation_log_service.log_operation(
+                db,
+                action="file_download",
+                user=current_user,
+                mount_id=mount_id,
+                path=path,
+                ip_address=ip,
+                user_agent=user_agent,
+                detail={"size": info.size, "name": info.name},
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            if adapter is not None:
+                await adapter.disconnect()
+            raise
+
     mime = info.mime_type or "application/octet-stream"
     filename = info.name
-    byte_range = _parse_range_header(request.headers.get("range"), info.size)
 
-    async def stream_with_db():
-        if byte_range is None:
-            async for chunk in file_service.download_file(db, mount_id, path):
-                yield chunk
-        else:
-            start, end = byte_range
-            async for chunk in file_service.download_file_range(db, mount_id, path, start, end):
-                yield chunk
-
-    ip, user_agent = operation_log_service.request_context(request)
-    await operation_log_service.log_operation(
-        db,
-        action="file_download",
-        user=current_user,
-        mount_id=mount_id,
-        path=path,
-        ip_address=ip,
-        user_agent=user_agent,
-        detail={"size": info.size, "name": filename},
-    )
+    async def stream_from_adapter():
+        try:
+            if byte_range is None:
+                async for chunk in adapter.download(path):
+                    yield chunk
+            else:
+                start, end = byte_range
+                async for chunk in adapter.download_range(path, start, end):
+                    yield chunk
+        finally:
+            await adapter.disconnect()
 
     headers = _download_headers(filename, info.size)
     status_code = 200
@@ -188,7 +237,7 @@ async def download_file(
         headers["Content-Length"] = str(end - start + 1)
         status_code = 206
 
-    return StreamingResponse(stream_with_db(), media_type=mime, headers=headers, status_code=status_code)
+    return StreamingResponse(stream_from_adapter(), media_type=mime, headers=headers, status_code=status_code)
 
 
 @router.post("/batch-download")
