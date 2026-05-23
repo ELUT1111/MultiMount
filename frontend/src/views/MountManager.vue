@@ -384,7 +384,6 @@ async function handleTest(mount) {
     const res = await mounts.testMount(mount.id)
     testResults[mount.id] = Boolean(res.success)
     ElMessage[res.success ? 'success' : 'error'](res.message)
-    await mounts.fetchMounts()
   } catch {
     testResults[mount.id] = false
     ElMessage.error('连接测试失败')
@@ -401,8 +400,7 @@ async function handleTestInModal() {
   }
   testingInModal.value = true
   try {
-    const { testConnection } = await import('@/api/mounts')
-    const res = await testConnection(editMountId.value)
+    const res = await mounts.testMount(editMountId.value)
     ElMessage[res.success ? 'success' : 'error'](res.message || '连接测试完成')
   } catch {
     ElMessage.error('连接测试失败')
@@ -470,10 +468,8 @@ function handleEdit(mount) {
 async function handleDelete(mount) {
   await ElMessageBox.confirm(`确定永久删除挂载 "${mount.name}"? 此操作不可恢复。`, '确认删除', { type: 'error' })
   try {
-    const { deleteMount } = await import('@/api/mounts')
-    await deleteMount(mount.id)
+    await mounts.removeMount(mount.id)
     ElMessage.success('已删除')
-    mounts.fetchMounts()
   } catch {
     ElMessage.error('删除失败')
   }
@@ -508,8 +504,11 @@ async function handleSave() {
       await updateMount(editMountId.value, payload)
       ElMessage.success('挂载更新成功')
     } else {
-      await mounts.addMount(payload)
-      ElMessage.success('挂载创建成功')
+      const mount = await mounts.addMount(payload)
+      ElMessage.success('挂载创建成功，正在测试连接')
+      const res = await mounts.testMount(mount.id)
+      testResults[mount.id] = Boolean(res.success)
+      ElMessage[res.success ? 'success' : 'warning'](res.message || (res.success ? '连接成功' : '连接失败'))
     }
     showAddDialog.value = false
     resetForm()
@@ -559,7 +558,7 @@ async function handleGrantPerm() {
     grantForm.user_id = null
     // 刷新列表
     permList.value = await getMountPermissions(permMount.value.id)
-    mounts.fetchMounts()
+    mounts.fetchMounts(true)
   } catch {
     ElMessage.error('授权失败')
   } finally {
@@ -573,7 +572,7 @@ async function handleRevokePerm(userId) {
     await revokePermission(permMount.value.id, userId)
     ElMessage.success('权限已撤销')
     permList.value = await getMountPermissions(permMount.value.id)
-    mounts.fetchMounts()
+    mounts.fetchMounts(true)
   } catch {
     ElMessage.error('撤销失败')
   }

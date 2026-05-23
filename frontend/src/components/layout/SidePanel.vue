@@ -24,7 +24,7 @@
           <span class="mount-name">{{ mount.name }}</span>
         </div>
       </template>
-      <div v-if="mounts.mounts.length === 0" class="empty-hint">暂无挂载</div>
+      <div v-if="mounts.accessibleMounts.length === 0" class="empty-hint">暂无可访问挂载</div>
     </div>
 
     <div class="sidebar-bottom mount-section">
@@ -87,7 +87,7 @@ const typeOrder = ['local', 'ftp', 'sftp', 'webdav', 'oss', 's3']
 const typeLabels = { local: '本地存储', ftp: 'FTP', sftp: 'SFTP', webdav: 'WebDAV', oss: '阿里云 OSS', s3: 'Amazon S3' }
 const groupedMounts = computed(() => {
   const map = {}
-  for (const m of mounts.mounts) {
+  for (const m of mounts.accessibleMounts) {
     if (!map[m.type]) map[m.type] = []
     map[m.type].push(m)
   }

@@ -76,16 +76,15 @@ import { computed, onMounted, watch } from 'vue'
 import { Refresh, Upload, Download, Connection } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTransfersStore } from '@/stores/transfers'
-import { useWebSocket } from '@/composables/useWebSocket'
+import { buildWebSocketUrl, useWebSocket } from '@/composables/useWebSocket'
 import { formatSpeed } from '@/utils/format'
 import TransferCard from '@/components/transfer/TransferCard.vue'
 
 const transfers = useTransfersStore()
 
 // WebSocket 实时进度
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
 const { data: wsData, connected: wsConnected, connect: wsConnect } = useWebSocket(
-  `${wsProtocol}//${location.host}/api/v1/transfers/ws`
+  buildWebSocketUrl('/api/v1/transfers/ws')
 )
 
 // 计数

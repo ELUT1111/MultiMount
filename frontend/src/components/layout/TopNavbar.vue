@@ -304,9 +304,12 @@ function notifIcon(type) {
 
 function formatNotifTime(iso) {
   if (!iso) return ''
-  const d = new Date(iso)
+  const normalized = /([zZ]|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`
+  const d = new Date(normalized)
   const now = new Date()
   const diff = (now - d) / 1000
+  if (Number.isNaN(d.getTime())) return ''
+  if (diff < 0) return '刚刚'
   if (diff < 60) return '刚刚'
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.mount import Mount
 from app.models.mount_permission import MountPermission
+from app.models.notification import Notification
 
 logger = logging.getLogger("multimount.mount_perm")
 
@@ -157,6 +158,17 @@ async def request_access(db: AsyncSession, mount_id: int, user_id: int,
 
     if owner_id == user_id:
         raise HTTPException(status_code=400, detail="无需申请自己挂载的权限")
+
+    pending_result = await db.execute(
+        select(Notification.metadata_)
+        .where(Notification.type == "access_request")
+        .where(Notification.related_id == mount_id)
+        .where(Notification.user_id == owner_id)
+    )
+    for row in pending_result.all():
+        meta = row[0] or {}
+        if meta.get("requester_id") == user_id and not meta.get("action_status"):
+            raise HTTPException(status_code=409, detail="已存在待处理的权限申请，请等待审批")
 
     await create_notification(
         db, owner_id,

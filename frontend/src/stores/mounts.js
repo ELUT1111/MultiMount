@@ -11,6 +11,7 @@ export const useMountsStore = defineStore('mounts', {
   getters: {
     onlineMounts: (state) => state.mounts.filter((m) => m.status === 'online'),
     offlineMounts: (state) => state.mounts.filter((m) => m.status === 'offline'),
+    accessibleMounts: (state) => state.mounts.filter((m) => ['read', 'readwrite'].includes(m.my_level)),
   },
 
   actions: {
@@ -38,7 +39,18 @@ export const useMountsStore = defineStore('mounts', {
     },
 
     async testMount(id) {
-      return await testConnectionApi(id)
+      const result = await testConnectionApi(id)
+      const index = this.mounts.findIndex((m) => m.id === id)
+      if (index !== -1) {
+        this.mounts[index] = {
+          ...this.mounts[index],
+          status: result.success ? 'online' : 'offline',
+          last_connected_at: result.success
+            ? new Date().toISOString()
+            : this.mounts[index].last_connected_at,
+        }
+      }
+      return result
     },
   },
 })

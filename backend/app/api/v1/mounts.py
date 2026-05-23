@@ -8,7 +8,7 @@ from app.models.user import User
 from app.schemas.mount import MountCreate, MountOut, MountUpdate
 from app.services import mount_service
 from app.core.mount_permissions import check_basic_permission
-from app.services.mount_permission_service import check_mount_access, get_accessible_mount_ids
+from app.services.mount_permission_service import check_mount_access
 
 router = APIRouter()
 
@@ -66,11 +66,15 @@ async def list_mounts(
     db: AsyncSession = Depends(get_db),
 ):
     all_mounts = await mount_service.list_mounts(db)
-    accessible_ids = await get_accessible_mount_ids(db, user)
-    all_mounts = [m for m in all_mounts if m.id in accessible_ids]
     out = [_mount_to_out(m) for m in all_mounts]
     out = await _enrich_owner_names(out, db)
     out = await _enrich_my_level(out, user, db)
+    for mount in out:
+        if mount.my_level == "none":
+            mount.config = {}
+            mount.advanced_config = None
+            mount.capacity_used = None
+            mount.capacity_total = None
     return out
 
 

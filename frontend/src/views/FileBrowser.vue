@@ -473,11 +473,11 @@ const shortcutItems = [
 const currentMount = computed(() => mounts.mounts.find((m) => m.id === files.currentMountId) || null)
 const canWriteCurrentMount = computed(() => currentMount.value?.my_level === 'readwrite')
 const emptyState = computed(() => {
-  if (!mounts.mounts.length) {
+  if (!mounts.accessibleMounts.length) {
     return {
       type: 'forbidden',
       title: '没有可访问的挂载点',
-      description: '暂无可访问的挂载点',
+      description: mounts.mounts.length ? '当前没有已授权的挂载点，可在挂载管理中申请权限' : '暂无可访问的挂载点',
       actionText: '去添加挂载',
       action: () => router.push('/mounts'),
     }
@@ -891,11 +891,11 @@ async function runBatchTransfer(action) {
 }
 
 async function chooseTargetMountId(action) {
-  if (!mounts.mounts.length) return files.currentMountId
-  const options = mounts.mounts.map((m) => `${m.id}: ${m.name}`).join('\n')
+  if (!mounts.accessibleMounts.length) return files.currentMountId
+  const options = mounts.accessibleMounts.map((m) => `${m.id}: ${m.name}`).join('\n')
   const { value } = await ElMessageBox.prompt(`目标挂载 ID，可选:\n${options}`, action === 'copy' ? '选择复制目标' : '选择移动目标', {
     inputValue: String(files.currentMountId),
-    inputValidator: (v) => Number(v) > 0 || '请输入有效挂载 ID',
+    inputValidator: (v) => mounts.accessibleMounts.some((m) => m.id === Number(v)) || '请输入可访问的挂载 ID',
   })
   return Number(value)
 }
@@ -1256,8 +1256,8 @@ watch(() => displayFiles.value.map(fileKey).join('|'), () => {
 onMounted(async () => {
   window.addEventListener('keydown', handleFileBrowserKeydown)
   await mounts.fetchMounts()
-  if (!route.query.q && mounts.mounts.length > 0) {
-    files.fetchFiles(mounts.mounts[0].id, '/')
+  if (!route.query.q && mounts.accessibleMounts.length > 0) {
+    files.fetchFiles(mounts.accessibleMounts[0].id, '/')
   }
 })
 

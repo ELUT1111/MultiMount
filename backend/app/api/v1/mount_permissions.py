@@ -102,7 +102,17 @@ async def revoke_permission(
 ):
     """撤销用户挂载权限"""
     await _require_mount_owner_or_admin(mount_id, user, db)
+    mount = await get_mount(db, mount_id)
     await mount_permission_service.revoke_permission(db, mount_id, target_user_id)
+    from app.services.notification_service import create_notification
+    await create_notification(
+        db,
+        target_user_id,
+        "permission_changed",
+        "权限已撤销",
+        f"您对挂载 \"{mount.name}\" 的访问权限已被撤销。",
+        related_id=mount_id,
+    )
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
         db,

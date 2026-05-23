@@ -33,7 +33,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import TopNavbar from '@/components/layout/TopNavbar.vue'
 import SidePanel from '@/components/layout/SidePanel.vue'
-import { useWebSocket } from '@/composables/useWebSocket'
+import { buildWebSocketUrl, useWebSocket } from '@/composables/useWebSocket'
 import { useNotificationsStore } from '@/stores/notifications'
 
 const notifications = useNotificationsStore()
@@ -51,9 +51,8 @@ let resizeStartX = 0
 let resizeStartWidth = SIDEBAR_DEFAULT
 
 // 全局通知 WebSocket
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
 const { data: wsData, connect: wsConnect } = useWebSocket(
-  `${wsProtocol}//${location.host}/api/v1/notifications/ws`
+  buildWebSocketUrl('/api/v1/notifications/ws')
 )
 
 watch(wsData, (val) => {

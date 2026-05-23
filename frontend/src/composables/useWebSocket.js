@@ -3,6 +3,13 @@
  */
 import { ref, onUnmounted } from 'vue'
 
+export function buildWebSocketUrl(path) {
+  const apiOrigin = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || window.location.origin
+  const url = new URL(path, apiOrigin)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
 export function useWebSocket(url, options = {}) {
   const { autoReconnect = true, reconnectInterval = 3000 } = options
 

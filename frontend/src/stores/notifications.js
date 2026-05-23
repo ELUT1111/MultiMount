@@ -9,6 +9,7 @@ import {
   markRead,
   markAllRead,
 } from '@/api/notifications'
+import { useMountsStore } from '@/stores/mounts'
 
 export const useNotificationsStore = defineStore('notifications', () => {
   const notifications = ref([])
@@ -178,6 +179,9 @@ export const useNotificationsStore = defineStore('notifications', () => {
       const matches = matchesCurrentFilters(data.notification)
       const inserted = matches ? upsertNotification(data.notification) : true
       if (inserted && !data.notification.is_read) unreadCount.value++
+      if (['permission_granted', 'permission_changed', 'permission_denied'].includes(data.notification?.type)) {
+        useMountsStore().fetchMounts(true).catch(() => {})
+      }
     } else if (data.type === 'notification_update') {
       if (matchesCurrentFilters(data.notification)) upsertNotification(data.notification)
       else removeNotification(data.notification.id)
