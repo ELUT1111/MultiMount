@@ -53,6 +53,20 @@ async def init_db():
                 await conn.execute(sa.text(f"ALTER TABLE transfer_tasks ADD COLUMN {column_name} {column_type}"))
             except Exception:
                 pass
+        # 增量迁移: 为 share_links 增加快照元数据字段
+        share_columns = [
+            ("file_name", "VARCHAR(512)"),
+            ("is_dir", "BOOLEAN DEFAULT 0"),
+            ("file_size", "BIGINT DEFAULT 0"),
+            ("mime_type", "VARCHAR(255)"),
+            ("snapshot_path", "TEXT"),
+            ("snapshot_size", "BIGINT DEFAULT 0"),
+        ]
+        for column_name, column_type in share_columns:
+            try:
+                await conn.execute(sa.text(f"ALTER TABLE share_links ADD COLUMN {column_name} {column_type}"))
+            except Exception:
+                pass
         # 增量迁移: 为 users 表添加 account 列 (如不存在)
         try:
             await conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_file_indexes_mount_type ON file_indexes(mount_id, file_type)"))

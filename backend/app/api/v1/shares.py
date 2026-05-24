@@ -1,7 +1,7 @@
 """
 分享链接 API — 创建、查询、访问、删除分享链接。
 """
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import tempfile
 import zipfile
@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,6 +66,10 @@ class ShareLinkOut(BaseModel):
     is_dir: bool | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("expires_at", "created_at")
+    def serialize_datetime(self, value: datetime | None):
+        return share_service.as_aware_utc(value).isoformat() if value else None
 
 
 class ShareAccessRequest(BaseModel):
@@ -175,16 +179,23 @@ async def get_link_info(token: str, db: AsyncSession = Depends(get_db)):
     from app.core.exceptions import BadRequestException
     if not link.is_active:
         raise BadRequestException("分享链接已失效")
-    if link.expires_at and link.expires_at < __import__("datetime").datetime.now(__import__("datetime").timezone.utc):
+    if share_service.is_expired(link.expires_at):
         raise BadRequestException("分享链接已过期")
+    if link.snapshot_path:
+        info = share_service.snapshot_info(link)
+        if info is None:
+            from app.core.exceptions import NotFoundException
+            raise NotFoundException("分享快照不存在")
+    else:
+        info = await file_service.get_info(db, link.mount_id, link.file_path)
     return {
         "file_path": link.file_path,
         "mount_id": link.mount_id,
         "has_access_code": bool(link.access_code),
-        "expires_at": link.expires_at,
+        "expires_at": share_service.as_aware_utc(link.expires_at),
         "view_count": link.view_count,
         "max_views": link.max_views,
-        "is_dir": (await file_service.get_info(db, link.mount_id, link.file_path)).is_dir,
+        "is_dir": info.is_dir,
     }
 
 
@@ -224,14 +235,24 @@ async def list_shared_dir(
     db: AsyncSession = Depends(get_db),
 ):
     """浏览目录分享。"""
-    link = await share_service.validate_and_access(db, token, access_code)
-    root_info = await file_service.get_info(db, link.mount_id, link.file_path)
+    link = await share_service.validate_and_access(db, token, access_code, count_view=False)
+    if link.snapshot_path:
+        root_info = share_service.snapshot_info(link)
+        if root_info is None:
+            from app.core.exceptions import NotFoundException
+            raise NotFoundException("分享快照不存在")
+    else:
+        root_info = await file_service.get_info(db, link.mount_id, link.file_path)
     if not root_info.is_dir:
         from app.core.exceptions import BadRequestException
         raise BadRequestException("该分享不是目录")
-    relative = path.strip("/")
-    target = link.file_path.rstrip("/") + ("/" + relative if relative else "")
-    items = await file_service.list_dir(db, link.mount_id, target)
+    if link.snapshot_path:
+        items = share_service.list_snapshot_dir(link, path)
+        target = f"{link.file_path.rstrip('/')}/{path.strip('/')}".rstrip("/") or link.file_path
+    else:
+        relative = path.strip("/")
+        target = link.file_path.rstrip("/") + ("/" + relative if relative else "")
+        items = await file_service.list_dir(db, link.mount_id, target)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
         db,
@@ -246,7 +267,7 @@ async def list_shared_dir(
     return [
         {
             "name": item.name,
-            "path": item.path.removeprefix(link.file_path.rstrip("/")).lstrip("/") or "/",
+            "path": item.path.removeprefix(link.file_path.rstrip("/")).lstrip("/") or item.path,
             "is_dir": item.is_dir,
             "size": item.size,
             "modified_at": item.modified_at,
@@ -265,21 +286,31 @@ async def download_link(
 ):
     """通过分享链接匿名下载文件。"""
     link = await share_service.validate_and_access(db, token, access_code)
-    info = await file_service.get_info(db, link.mount_id, link.file_path)
+    uses_snapshot = bool(link.snapshot_path)
+    if uses_snapshot:
+        info = share_service.snapshot_info(link)
+        if info is None:
+            from app.core.exceptions import NotFoundException
+            raise NotFoundException("分享快照不存在")
+    else:
+        info = await file_service.get_info(db, link.mount_id, link.file_path)
     if info.is_dir:
         tmp = tempfile.NamedTemporaryFile(prefix="mounthub_share_", suffix=".zip", delete=False)
         tmp_path = tmp.name
         tmp.close()
         try:
-            with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                async for relative_path, file_info in file_service.iter_files_recursive(
-                    db, link.mount_id, link.file_path, base_name=info.name or "share"
-                ):
-                    if file_info.is_dir:
-                        continue
-                    with zf.open(relative_path, "w") as dest:
-                        async for chunk in file_service.download_file(db, link.mount_id, file_info.path):
-                            dest.write(chunk)
+            if uses_snapshot:
+                share_service.write_snapshot_zip(link, tmp_path)
+            else:
+                with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    async for relative_path, file_info in file_service.iter_files_recursive(
+                        db, link.mount_id, link.file_path, base_name=info.name or "share"
+                    ):
+                        if file_info.is_dir:
+                            continue
+                        with zf.open(relative_path, "w") as dest:
+                            async for chunk in file_service.download_file(db, link.mount_id, file_info.path):
+                                dest.write(chunk)
         except Exception:
             try:
                 os.unlink(tmp_path)
@@ -319,8 +350,12 @@ async def download_link(
     )
 
     async def stream():
-        async for chunk in file_service.download_file(db, link.mount_id, link.file_path):
-            yield chunk
+        if uses_snapshot:
+            async for chunk in share_service.stream_snapshot_file(link):
+                yield chunk
+        else:
+            async for chunk in file_service.download_file(db, link.mount_id, link.file_path):
+                yield chunk
 
     encoded = quote(filename)
     return StreamingResponse(

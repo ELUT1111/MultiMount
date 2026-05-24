@@ -116,26 +116,35 @@ class WebDAVRequestContext:
         if self.recycle_delete:
             async with self.session_factory() as db:
                 await trash_service.trash_file(db, mount_id, path, user=self.user)
-                from app.services import search_service
+                from app.services import search_service, share_service
                 await search_service.remove_path_index(db, mount_id, path)
+                await share_service.handle_source_deleted(db, mount_id, path)
                 await db.commit()
         else:
             await adapter.delete(path)
             async with self.session_factory() as db:
-                from app.services import search_service
+                from app.services import search_service, share_service
                 await search_service.remove_path_index(db, mount_id, path)
+                await share_service.handle_source_deleted(db, mount_id, path)
                 await db.commit()
 
     async def refresh_index(self, mount_id: int, path: str) -> None:
         async with self.session_factory() as db:
-            from app.services import search_service
+            from app.services import search_service, share_service
             await search_service.refresh_path_index(db, mount_id, path)
+            await share_service.handle_source_changed(db, mount_id, path)
             await db.commit()
 
     async def remove_index(self, mount_id: int, path: str) -> None:
         async with self.session_factory() as db:
             from app.services import search_service
             await search_service.remove_path_index(db, mount_id, path)
+            await db.commit()
+
+    async def source_moved(self, mount_id: int, src: str, dst: str) -> None:
+        async with self.session_factory() as db:
+            from app.services import share_service
+            await share_service.handle_source_moved(db, mount_id, src, dst)
             await db.commit()
 
 
@@ -260,6 +269,8 @@ class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
             else:
                 _run_async(self._adapter.copy(source_path, target_path))
             _run_async(self._context.refresh_index(self._mount_id, target_path))
+            if is_move:
+                _run_async(self._context.source_moved(self._mount_id, source_path, target_path))
             self._log("move" if is_move else "copy", source_path, target_path)
         except DAVError:
             raise
@@ -348,6 +359,8 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
             else:
                 _run_async(self._adapter.copy(source_path, target_path))
             _run_async(self._context.refresh_index(self._mount_id, target_path))
+            if is_move:
+                _run_async(self._context.source_moved(self._mount_id, source_path, target_path))
             self._log("move" if is_move else "copy", source_path, target_path)
         except DAVError:
             raise

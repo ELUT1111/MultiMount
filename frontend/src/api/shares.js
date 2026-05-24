@@ -22,21 +22,22 @@ export const updateSharePolicy = (data) => request.put('/shares/policy', data)
 export const batchShare = (data) => request.post('/shares/batch', data)
 
 /** 获取分享链接信息 (无需登录) */
-export const getShareInfo = (token) => request.get(`/shares/${token}/info`)
+export const getShareInfo = (token) => request.get(`/shares/${token}/info`, { suppressErrorMessage: true })
 
 /** 浏览目录分享 */
 export const listShareDir = (token, path = '/', accessCode = '') =>
-  request.get(`/shares/${token}/list`, { params: { path, access_code: accessCode } })
+  request.get(`/shares/${token}/list`, { params: { path, access_code: accessCode }, suppressErrorMessage: true })
 
 /** 验证并访问分享链接 */
 export const accessShare = (token, accessCode = '') =>
-  request.post(`/shares/${token}/access`, { access_code: accessCode })
+  request.post(`/shares/${token}/access`, { access_code: accessCode }, { suppressErrorMessage: true })
 
 /** 通过分享链接下载文件 */
 export const downloadShare = (token, accessCode = '') =>
   request.get(`/shares/${token}/download`, {
     params: { access_code: accessCode },
     responseType: 'blob',
+    suppressErrorMessage: true,
   })
 
 /** 删除分享链接 */

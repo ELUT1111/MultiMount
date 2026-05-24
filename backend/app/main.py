@@ -41,6 +41,33 @@ async def _search_index_refresh_loop(logger) -> None:
             logger.warning("搜索索引定时刷新失败: %s", exc)
 
 
+async def _share_snapshot_sync_loop(logger) -> None:
+    from app.database import async_session_factory
+    from app.services.share_service import sync_active_snapshots
+
+    interval = settings.SHARE_SNAPSHOT_CLEANUP_INTERVAL_SECONDS
+    if interval <= 0:
+        logger.info("分享快照定时同步已禁用")
+        return
+
+    sync_lock = asyncio.Lock()
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            if sync_lock.locked():
+                logger.warning("上一次分享快照同步仍在运行，跳过本轮")
+                continue
+            async with sync_lock:
+                async with async_session_factory() as db:
+                    summary = await sync_active_snapshots(db)
+                    await db.commit()
+            logger.info("分享快照定时同步完成: %s", summary)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("分享快照定时同步失败: %s", exc)
+
+
 def _validate_security_config() -> None:
     """阻止生产环境使用不安全的默认配置。"""
     default_jwt_secrets = {
@@ -81,6 +108,8 @@ async def lifespan(_app: FastAPI):
     async with async_session_factory() as db:
         await seed_default_roles(db)
         await seed_admin_user(db)
+        from app.services.share_service import cleanup_expired_snapshots
+        await cleanup_expired_snapshots(db)
         await db.commit()
         await init_cache(db)
     logger.info("默认角色和管理员用户初始化完成")
@@ -90,6 +119,7 @@ async def lifespan(_app: FastAPI):
         logger.info("已恢复 %d 个未完成传输任务", recovered)
 
     search_index_task = asyncio.create_task(_search_index_refresh_loop(logger))
+    share_snapshot_task = asyncio.create_task(_share_snapshot_sync_loop(logger))
 
     # 安全警告
     if settings.JWT_SECRET_KEY in ("CHANGE_ME_TO_A_RANDOM_SECRET_KEY", "multimount-dev-secret-key-change-in-production"):
@@ -102,11 +132,12 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        search_index_task.cancel()
-        try:
-            await search_index_task
-        except asyncio.CancelledError:
-            pass
+        for task in (search_index_task, share_snapshot_task):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     logger.info("MultiMount 正在关闭...")
 

@@ -59,7 +59,7 @@ async def resolve_conflict(db: AsyncSession, mount_id: int, path: str,
     if policy == "skip":
         return path, True
     if policy == "overwrite":
-        await delete_file_permanently(db, mount_id, path)
+        await delete_file_permanently(db, mount_id, path, sync_shares=False)
         return path, False
     if policy == "rename":
         for i in range(1, 1000):
@@ -155,13 +155,15 @@ async def upload_file(db: AsyncSession, mount_id: int, path: str,
         info = await adapter.get_info(path)
         from app.services import search_service
         await search_service.refresh_path_index(db, mount_id, path, recursive=False)
+        from app.services import share_service
+        await share_service.handle_source_changed(db, mount_id, path)
         return info
     except Exception as e:
         logger.error("upload 失败 mount=%d path=%s: %s", mount_id, path, e)
         raise BadRequestException(f"上传失败: {e}")
 
 
-async def delete_file_permanently(db: AsyncSession, mount_id: int, path: str) -> None:
+async def delete_file_permanently(db: AsyncSession, mount_id: int, path: str, sync_shares: bool = True) -> None:
     """删除文件或目录"""
     path = normalize_path(path)
     if path == "/":
@@ -172,6 +174,9 @@ async def delete_file_permanently(db: AsyncSession, mount_id: int, path: str) ->
         await adapter.delete(path)
         from app.services import search_service
         await search_service.remove_path_index(db, mount_id, path)
+        if sync_shares:
+            from app.services import share_service
+            await share_service.handle_source_deleted(db, mount_id, path)
     except FileNotFoundError:
         raise NotFoundException(f"文件不存在: {path}")
     except Exception as e:
@@ -186,6 +191,8 @@ async def delete_file(db: AsyncSession, mount_id: int, path: str, user=None) -> 
     await trash_service.trash_file(db, mount_id, path, user=user)
     from app.services import search_service
     await search_service.remove_path_index(db, mount_id, path)
+    from app.services import share_service
+    await share_service.handle_source_deleted(db, mount_id, path)
 
 
 async def make_directory(db: AsyncSession, mount_id: int, path: str) -> FileInfo:
@@ -198,6 +205,8 @@ async def make_directory(db: AsyncSession, mount_id: int, path: str) -> FileInfo
         info = await adapter.get_info(path)
         from app.services import search_service
         await search_service.refresh_path_index(db, mount_id, path, recursive=False)
+        from app.services import share_service
+        await share_service.handle_source_changed(db, mount_id, path)
         return info
     except Exception as e:
         logger.error("mkdir 失败 mount=%d path=%s: %s", mount_id, path, e)
@@ -220,6 +229,8 @@ async def move_file(db: AsyncSession, mount_id: int, src: str, dst: str,
         from app.services import search_service
         await search_service.remove_path_index(db, mount_id, src)
         await search_service.refresh_path_index(db, mount_id, dst)
+        from app.services import share_service
+        await share_service.handle_source_moved(db, mount_id, src, dst)
         return info
     except FileNotFoundError:
         raise NotFoundException(f"源文件不存在: {src}")
@@ -243,6 +254,8 @@ async def copy_file(db: AsyncSession, mount_id: int, src: str, dst: str,
         info = await adapter.get_info(dst)
         from app.services import search_service
         await search_service.refresh_path_index(db, mount_id, dst)
+        from app.services import share_service
+        await share_service.handle_source_changed(db, mount_id, dst)
         return info
     except FileNotFoundError:
         raise NotFoundException(f"源文件不存在: {src}")

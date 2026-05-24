@@ -3,7 +3,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -15,6 +15,14 @@ class ShareLink(BaseModel):
     # 关联的挂载点和文件路径
     mount_id: Mapped[int] = mapped_column(ForeignKey("mounts.id"), nullable=False, index=True)
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_dir: Mapped[bool] = mapped_column(Boolean, default=False)
+    file_size: Mapped[int] = mapped_column(BigInteger, default=0)
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # 本地快照信息。老数据可能为空, 访问时会回退到原挂载路径。
+    snapshot_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    snapshot_size: Mapped[int] = mapped_column(BigInteger, default=0)
 
     # 分享令牌 (URL 中使用的唯一标识)
     token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)

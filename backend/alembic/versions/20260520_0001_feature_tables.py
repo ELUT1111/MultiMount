@@ -33,6 +33,12 @@ def upgrade() -> None:
             "share_links",
             sa.Column("mount_id", sa.Integer(), sa.ForeignKey("mounts.id"), nullable=False),
             sa.Column("file_path", sa.Text(), nullable=False),
+            sa.Column("file_name", sa.String(length=512), nullable=True),
+            sa.Column("is_dir", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("file_size", sa.BigInteger(), nullable=False, server_default="0"),
+            sa.Column("mime_type", sa.String(length=255), nullable=True),
+            sa.Column("snapshot_path", sa.Text(), nullable=True),
+            sa.Column("snapshot_size", sa.BigInteger(), nullable=False, server_default="0"),
             sa.Column("token", sa.String(length=64), nullable=False),
             sa.Column("created_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
             sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
@@ -46,6 +52,18 @@ def upgrade() -> None:
         )
         op.create_index("ix_share_links_mount_id", "share_links", ["mount_id"])
         op.create_index("ix_share_links_token", "share_links", ["token"], unique=True)
+    else:
+        share_columns = [
+            ("file_name", sa.Column("file_name", sa.String(length=512), nullable=True)),
+            ("is_dir", sa.Column("is_dir", sa.Boolean(), nullable=False, server_default=sa.false())),
+            ("file_size", sa.Column("file_size", sa.BigInteger(), nullable=False, server_default="0")),
+            ("mime_type", sa.Column("mime_type", sa.String(length=255), nullable=True)),
+            ("snapshot_path", sa.Column("snapshot_path", sa.Text(), nullable=True)),
+            ("snapshot_size", sa.Column("snapshot_size", sa.BigInteger(), nullable=False, server_default="0")),
+        ]
+        for column_name, column in share_columns:
+            if not _has_column(inspector, "share_links", column_name):
+                op.add_column("share_links", column)
 
     if not _has_table(inspector, "trash_items"):
         op.create_table(
@@ -181,6 +199,9 @@ def downgrade() -> None:
         op.drop_table("trash_items")
 
     if _has_table(inspector, "share_links"):
+        for column_name in ["snapshot_size", "snapshot_path", "mime_type", "file_size", "is_dir", "file_name"]:
+            if _has_column(inspector, "share_links", column_name):
+                op.drop_column("share_links", column_name)
         op.drop_index("ix_share_links_token", table_name="share_links")
         op.drop_index("ix_share_links_mount_id", table_name="share_links")
         op.drop_table("share_links")

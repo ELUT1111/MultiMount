@@ -471,6 +471,11 @@ async def _execute_mount_transfer(db: AsyncSession, task: TransferTask) -> None:
             if task.type == "move":
                 await search_service.remove_path_index(db, source_mount_id, source_path)
             await search_service.refresh_path_index(db, target_mount_id, final_target_path)
+            from app.services import share_service
+            if task.type == "move":
+                await share_service.handle_source_moved(db, source_mount_id, source_path, final_target_path)
+            else:
+                await share_service.handle_source_changed(db, target_mount_id, final_target_path)
             task.transferred = source_info.size
             await db.commit()
             await broadcast_progress(task)
@@ -502,6 +507,10 @@ async def _execute_mount_transfer(db: AsyncSession, task: TransferTask) -> None:
         if task.type == "move":
             await search_service.remove_path_index(db, source_mount_id, source_path)
         await search_service.refresh_path_index(db, target_mount_id, final_target_path)
+        from app.services import share_service
+        if task.type == "move":
+            await share_service.handle_source_deleted(db, source_mount_id, source_path)
+        await share_service.handle_source_changed(db, target_mount_id, final_target_path)
     except TransferPaused:
         if target_mount_id != source_mount_id:
             try:

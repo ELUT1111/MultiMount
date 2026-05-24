@@ -33,6 +33,7 @@ class Settings(BaseSettings):
 
     # Search and preview
     SEARCH_INDEX_REFRESH_INTERVAL_SECONDS: int = 3600
+    SHARE_SNAPSHOT_CLEANUP_INTERVAL_SECONDS: int = 3600
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

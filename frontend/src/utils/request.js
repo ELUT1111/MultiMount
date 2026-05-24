@@ -75,13 +75,24 @@ service.interceptors.response.use(
   (response) => response.data,
   async (error) => {
     const status = error.response?.status
-    const detail = error.response?.data?.detail || '请求失败'
+    let detail = error.response?.data?.detail || ''
+    if (!detail && error.response?.data instanceof Blob) {
+      try {
+        const parsed = JSON.parse(await error.response.data.text())
+        detail = parsed.detail || ''
+      } catch {
+        detail = ''
+      }
+    }
+    detail ||= '请求失败'
 
     if (status === 401) {
       return handle401(error)
     }
 
-    ElMessage.error(detail)
+    if (!error.config?.suppressErrorMessage) {
+      ElMessage.error(detail)
+    }
     return Promise.reject(error)
   }
 )

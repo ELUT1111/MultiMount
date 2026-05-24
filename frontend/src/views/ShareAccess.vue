@@ -83,6 +83,8 @@ const fileName = computed(() => {
   return path.split('/').filter(Boolean).pop() || '分享文件'
 })
 
+const downloadName = computed(() => info.value.is_dir ? `${fileName.value}.zip` : fileName.value)
+
 function formatTime(iso) {
   return new Date(iso).toLocaleString('zh-CN')
 }
@@ -99,6 +101,19 @@ async function loadInfo() {
   }
 }
 
+async function errorMessage(error, fallback) {
+  const data = error.response?.data
+  if (data instanceof Blob) {
+    try {
+      const parsed = JSON.parse(await data.text())
+      return parsed.detail || fallback
+    } catch {
+      return fallback
+    }
+  }
+  return data?.detail || fallback
+}
+
 async function handleAccess() {
   accessing.value = true
   try {
@@ -110,12 +125,12 @@ async function handleAccess() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = fileName.value
+    a.download = downloadName.value
     a.click()
     URL.revokeObjectURL(url)
     verified.value = true
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '访问失败')
+    ElMessage.error(await errorMessage(e, '访问失败'))
   } finally {
     accessing.value = false
   }
