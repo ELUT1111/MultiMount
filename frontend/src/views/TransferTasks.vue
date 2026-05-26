@@ -1,7 +1,3 @@
-<!--
-  传输任务页面 — 显示所有上传/下载任务, 支持暂停/恢复/取消/重试。
-  通过 WebSocket 实时接收进度更新, 无需手动刷新。
--->
 <template>
   <div class="transfer-tasks">
     <div class="page-header">
@@ -15,7 +11,6 @@
       </div>
     </div>
 
-    <!-- 状态标签页 -->
     <el-tabs v-model="transfers.activeTab">
       <el-tab-pane name="running">
         <template #label>
@@ -34,9 +29,8 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 任务列表 -->
     <div v-loading="transfers.loading" class="task-list">
-      <el-empty v-if="!transfers.loading && transfers.filteredTasks.length === 0" description="暂无传输任务" />
+      <el-empty v-if="!transfers.loading && transfers.filteredTasks.length === 0" description="暂无复制/移动任务" />
 
       <TransferCard
         v-for="task in transfers.filteredTasks"
@@ -49,15 +43,10 @@
       />
     </div>
 
-    <!-- 底部状态栏 -->
     <div class="transfer-footer">
       <div class="stat">
-        <el-icon><Upload /></el-icon>
-        <span>上传: {{ formatSpeed(transfers.totalUploadSpeed) }}</span>
-      </div>
-      <div class="stat">
-        <el-icon><Download /></el-icon>
-        <span>下载: {{ formatSpeed(transfers.totalDownloadSpeed) }}</span>
+        <el-icon><Connection /></el-icon>
+        <span>传输速度: {{ formatSpeed(transfers.totalTransferSpeed) }}</span>
       </div>
       <div class="stat">
         <el-icon><Connection /></el-icon>
@@ -73,7 +62,7 @@
 
 <script setup>
 import { computed, onMounted, watch } from 'vue'
-import { Refresh, Upload, Download, Connection } from '@element-plus/icons-vue'
+import { Connection, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTransfersStore } from '@/stores/transfers'
 import { buildWebSocketUrl, useWebSocket } from '@/composables/useWebSocket'
@@ -82,55 +71,48 @@ import TransferCard from '@/components/transfer/TransferCard.vue'
 
 const transfers = useTransfersStore()
 
-// WebSocket 实时进度
 const { data: wsData, connected: wsConnected, connect: wsConnect } = useWebSocket(
-  buildWebSocketUrl('/api/v1/transfers/ws')
+  buildWebSocketUrl('/api/v1/transfers/ws'),
 )
 
-// 计数
-const runningCount = computed(() => transfers.tasks.filter((t) => ['queued', 'pending', 'running', 'paused'].includes(t.status)).length)
+const activeStatuses = ['queued', 'pending', 'running', 'paused']
+const runningCount = computed(() => transfers.tasks.filter((t) => activeStatuses.includes(t.status)).length)
 const completedCount = computed(() => transfers.tasks.filter((t) => t.status === 'completed').length)
 const failedCount = computed(() => transfers.tasks.filter((t) => t.status === 'failed').length)
 
-// WebSocket 收到进度更新 → 更新 store
 watch(wsData, (val) => {
   if (val?.type === 'transfer_progress') {
     transfers.updateTaskProgress(val)
   }
 })
 
-// 取消任务
 async function handleCancel(id) {
-  await ElMessageBox.confirm('确定取消此任务?', '确认', { type: 'warning' })
+  await ElMessageBox.confirm('确定取消此任务？', '确认', { type: 'warning' })
   await transfers.cancelTask(id)
   ElMessage.success('已取消')
 }
 
-// 批量暂停 (并行执行)
 async function handleBatchPause() {
   const running = transfers.tasks.filter((t) => t.status === 'running')
   await Promise.allSettled(running.map((t) => transfers.pauseTask(t.id)))
   ElMessage.success('已全部暂停')
 }
 
-// 批量恢复 (并行执行)
 async function handleBatchResume() {
   const paused = transfers.tasks.filter((t) => t.status === 'paused')
   await Promise.allSettled(paused.map((t) => transfers.resumeTask(t.id)))
   ElMessage.success('已全部恢复')
 }
 
-// 批量取消 (并行执行)
 async function handleBatchCancel() {
-  await ElMessageBox.confirm('确定取消所有进行中的任务?', '确认', { type: 'warning' })
-  const active = transfers.tasks.filter((t) => ['queued', 'pending', 'running', 'paused'].includes(t.status))
+  await ElMessageBox.confirm('确定取消所有进行中的任务？', '确认', { type: 'warning' })
+  const active = transfers.tasks.filter((t) => activeStatuses.includes(t.status))
   await Promise.allSettled(active.map((t) => transfers.cancelTask(t.id)))
   ElMessage.success('已全部取消')
 }
 
-// 清除已完成 (带确认 + 并行执行)
 async function handleClearCompleted() {
-  await ElMessageBox.confirm('确定清除所有已完成的任务?', '确认', { type: 'warning' })
+  await ElMessageBox.confirm('确定清除所有已完成的任务？', '确认', { type: 'warning' })
   const completed = transfers.tasks.filter((t) => t.status === 'completed')
   await Promise.allSettled(completed.map((t) => transfers.cancelTask(t.id)))
   ElMessage.success('已清除')

@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.v1 import mounts
+from app.services import mount_service
 
 
 @pytest.mark.asyncio
@@ -88,3 +89,46 @@ async def test_list_mounts_includes_no_access_mounts_for_permission_request(monk
     assert response[0].advanced_config is None
     assert response[0].capacity_used is None
     assert response[0].capacity_total is None
+
+
+@pytest.mark.asyncio
+async def test_mount_connection_refreshes_capacity(monkeypatch):
+    mount = SimpleNamespace(
+        id=1,
+        status="offline",
+        capacity_used=None,
+        capacity_total=None,
+        config={},
+        type="fake",
+        user_id=42,
+    )
+
+    class FakeAdapter:
+        async def test_connection(self):
+            return True
+
+        async def connect(self):
+            return True
+
+        async def disconnect(self):
+            return None
+
+        async def get_capacity(self):
+            return {"used": 25, "total": 100}
+
+    async def fake_get_mount(_db, _mount_id):
+        return mount
+
+    class FakeDb:
+        async def flush(self):
+            return None
+
+    monkeypatch.setattr(mount_service, "get_mount", fake_get_mount)
+    monkeypatch.setattr(mount_service, "_get_adapter", lambda _mount: FakeAdapter())
+
+    ok = await mount_service.test_mount_connection(FakeDb(), 1)
+
+    assert ok is True
+    assert mount.status == "online"
+    assert mount.capacity_used == 25
+    assert mount.capacity_total == 100

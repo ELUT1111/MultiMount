@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.v1.files import _parse_range_header
+from app.schemas.transfer import TransferCreateRequest
 from app.services import file_service, transfer_service
 
 
@@ -12,6 +13,26 @@ def test_parse_range_header_supports_start_end():
 
 def test_parse_range_header_supports_suffix_range():
     assert _parse_range_header("bytes=-10", 100) == (90, 99)
+
+
+def test_transfer_create_request_rejects_upload_download_tasks():
+    with pytest.raises(Exception):
+        TransferCreateRequest(
+            type="upload",
+            mount_id=1,
+            source_path="/local.bin",
+            target_path="/remote.bin",
+            file_name="local.bin",
+        )
+
+    with pytest.raises(Exception):
+        TransferCreateRequest(
+            type="download",
+            mount_id=1,
+            source_path="/remote.bin",
+            target_path="/local.bin",
+            file_name="remote.bin",
+        )
 
 
 @pytest.mark.asyncio

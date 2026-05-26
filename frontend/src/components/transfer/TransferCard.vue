@@ -1,12 +1,9 @@
-<!--
-  传输任务卡片 - 显示单个任务的详细信息、进度条和操作按钮。
--->
 <template>
   <div class="transfer-card">
     <div class="card-header">
       <div class="task-info">
-        <el-tag :type="task.type === 'upload' ? 'primary' : 'success'" size="small">
-          {{ task.type === 'upload' ? '上传' : task.type === 'download' ? '下载' : task.type === 'copy' ? '复制' : '移动' }}
+        <el-tag :type="task.type === 'copy' ? 'success' : 'warning'" size="small">
+          {{ task.type === 'copy' ? '复制' : '移动' }}
         </el-tag>
         <span class="file-name">{{ task.file_name }}</span>
       </div>

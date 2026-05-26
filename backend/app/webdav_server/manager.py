@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
 from app.webdav_server.domain_controller import UserDomainController
+from app.webdav_server.middleware import AccessLogMiddleware
 from app.webdav_server.provider import MultiMountDAVProvider
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class WebDAVManager:
         self._config = WebDAVConfig()
         self._domain_controller: UserDomainController | None = None
         self._error: str | None = None
+        self._mount_count = 0
 
     @property
     def status(self) -> WebDAVStatus:
@@ -71,7 +73,7 @@ class WebDAVManager:
             ssl=self._config.ssl,
             ssl_cert_path=self._config.ssl_cert_path,
             ssl_key_path=self._config.ssl_key_path,
-            mount_count=0,
+            mount_count=self._mount_count,
             error=self._error,
             recycle_delete=self._config.recycle_delete,
             root_mount_id=self._config.root_mount_id,
@@ -104,6 +106,7 @@ class WebDAVManager:
             self._server_thread.start()
             self._running = True
             self._error = None
+            self._mount_count = await self._count_served_mounts(db)
             logger.info("WebDAV service started on %s:%s", self._config.host, self._config.port)
         except Exception as exc:
             self._error = str(exc)
@@ -124,6 +127,7 @@ class WebDAVManager:
             if self._domain_controller:
                 self._domain_controller.close()
                 self._domain_controller = None
+            self._mount_count = 0
             logger.info("WebDAV service stopped")
         except Exception as exc:
             self._error = str(exc)
@@ -164,12 +168,24 @@ class WebDAVManager:
 
         return config
 
+    async def _count_served_mounts(self, db: AsyncSession) -> int:
+        from sqlalchemy import func, select
+        from app.models.mount import Mount
+
+        query = select(func.count(Mount.id))
+        if self._config.root_mount_id is not None:
+            query = query.where(Mount.id == self._config.root_mount_id)
+        result = await db.execute(query)
+        return int(result.scalar() or 0)
+
     def _run_server(self, wsgidav_config: dict):
         try:
             from cheroot import wsgi as cheroot_wsgi
             from wsgidav.wsgidav_app import WsgiDAVApp
 
             app = WsgiDAVApp(wsgidav_config)
+            if self._config.access_log:
+                app = AccessLogMiddleware(app, self._config.log_path)
             self._server = cheroot_wsgi.Server(
                 (wsgidav_config["host"], wsgidav_config["port"]),
                 app,

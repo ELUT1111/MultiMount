@@ -25,7 +25,7 @@ from app.utils.path_utils import normalize_path
 logger = logging.getLogger("multimount.transfer")
 
 DEFAULT_CHUNK_SIZE = 64 * 1024
-TRANSFER_TYPES = {"upload", "download", "copy", "move"}
+TRANSFER_TYPES = {"copy", "move"}
 QUEUED_STATUSES = {"queued", "pending"}
 
 _ws_connections: dict[int, list] = {}
@@ -265,10 +265,8 @@ async def create_task(
 
     source_mount_id = source_mount_id or mount_id
     target_mount_id = target_mount_id or mount_id
-    if task_type in ("copy", "move") and (not source_mount_id or not target_mount_id):
+    if not source_mount_id or not target_mount_id:
         raise BadRequestException("跨挂载传输需要 source_mount_id 和 target_mount_id")
-    if task_type in ("upload", "download") and not mount_id:
-        raise BadRequestException("上传/下载传输任务需要 mount_id")
 
     download_limit_bps, upload_limit_bps = await _resolve_task_limits(
         db,
@@ -379,10 +377,7 @@ async def _execute_transfer(task_id: int):
             await db.refresh(task)
             await broadcast_progress(task)
 
-            if task.type in ("copy", "move"):
-                await _execute_mount_transfer(db, task)
-            else:
-                raise BadRequestException("队列式上传/下载已由普通上传和分片上传接口处理")
+            await _execute_mount_transfer(db, task)
 
             await db.refresh(task)
             if task.status == "running":

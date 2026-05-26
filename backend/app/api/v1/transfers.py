@@ -42,18 +42,6 @@ async def _authorize_transfer(body: TransferCreateRequest, user, db: AsyncSessio
             await enforce_file_policy(db, user, target_mount_id, "upload")
         return
 
-    if body.type == "download":
-        if body.mount_id is None:
-            raise HTTPException(status_code=400, detail="Download task requires mount_id")
-        await enforce_file_policy(db, user, body.mount_id, "download")
-        return
-
-    if body.type == "upload":
-        if body.mount_id is None:
-            raise HTTPException(status_code=400, detail="Upload task requires mount_id")
-        await enforce_file_policy(db, user, body.mount_id, "upload")
-        return
-
     raise HTTPException(status_code=400, detail="Unsupported transfer task type")
 
 

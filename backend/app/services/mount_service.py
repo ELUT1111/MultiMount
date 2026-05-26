@@ -56,6 +56,27 @@ def _get_adapter(mount: Mount) -> BaseAdapter:
     return AdapterRegistry.create(mount.type, config)
 
 
+async def _refresh_mount_capacity(mount: Mount) -> None:
+    adapter = _get_adapter(mount)
+    try:
+        await adapter.connect()
+        capacity = await adapter.get_capacity()
+    except Exception:
+        capacity = None
+    finally:
+        try:
+            await adapter.disconnect()
+        except Exception:
+            pass
+
+    if capacity:
+        mount.capacity_used = capacity.get("used")
+        mount.capacity_total = capacity.get("total")
+    else:
+        mount.capacity_used = None
+        mount.capacity_total = None
+
+
 async def list_mounts(db: AsyncSession) -> list[Mount]:
     result = await db.execute(select(Mount).order_by(Mount.id))
     return list(result.scalars().all())
@@ -140,8 +161,11 @@ async def test_mount_connection(db: AsyncSession, mount_id: int) -> bool:
         if ok:
             mount.status = "online"
             mount.last_connected_at = datetime.now(timezone.utc)
+            await _refresh_mount_capacity(mount)
         else:
             mount.status = "offline"
+            mount.capacity_used = None
+            mount.capacity_total = None
         await db.flush()
 
         # 连接失败且之前是在线状态, 通知挂载创建者

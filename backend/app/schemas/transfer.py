@@ -31,7 +31,7 @@ class TransferTaskOut(BaseModel):
 
 
 class TransferCreateRequest(BaseModel):
-    type: Literal["upload", "download", "copy", "move"]
+    type: Literal["copy", "move"]
     mount_id: int | None = None
     source_mount_id: int | None = None
     target_mount_id: int | None = None

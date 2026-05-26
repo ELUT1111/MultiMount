@@ -1,45 +1,34 @@
-"""
-WebDAV 中间件 — 访问日志记录。
-
-在 wsgidav 请求处理前后注入日志, 记录:
-  - 客户端 IP / 用户名
-  - 请求方法 (GET/PUT/DELETE/PROPFIND 等)
-  - 请求路径
-  - 响应状态码
-  - 耗时
-"""
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 import time
 
 logger = logging.getLogger("webdav.access")
 
 
 class AccessLogMiddleware:
-    """
-    WebDAV 访问日志中间件 — 包装 WSGI 应用, 记录每次请求。
+    """WSGI middleware that logs WebDAV requests to the app log and optional file."""
 
-    用法:
-        app = WsgiDAVApp(config)
-        app = AccessLogMiddleware(app)
-    """
-
-    def __init__(self, app):
+    def __init__(self, app, log_path: str = ""):
         self._app = app
+        self._logger = logger
+        if log_path:
+            path = Path(log_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._logger = logging.getLogger(f"webdav.access.file.{id(self)}")
+            self._logger.setLevel(logging.INFO)
+            self._logger.propagate = True
+            handler = logging.FileHandler(path, encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"))
+            self._logger.addHandler(handler)
 
     def __call__(self, environ, start_response):
-        """WSGI 入口"""
         start_time = time.time()
-
-        # 提取请求信息
         method = environ.get("REQUEST_METHOD", "UNKNOWN")
         path = environ.get("PATH_INFO", "/")
         remote_addr = environ.get("REMOTE_ADDR", "-")
-        # wsgidav 认证后会在 environ 中设置 REMOTE_USER
-        username = environ.get("REMOTE_USER", "-")
-
-        # 包装 start_response 以捕获状态码
+        username = environ.get("REMOTE_USER") or environ.get("wsgidav.auth.user_name") or "-"
         status_code = [None]
 
         def _start_response(status, headers, exc_info=None):
@@ -47,11 +36,15 @@ class AccessLogMiddleware:
             return start_response(status, headers, exc_info)
 
         try:
-            result = self._app(environ, _start_response)
-            return result
+            return self._app(environ, _start_response)
         finally:
             elapsed = time.time() - start_time
-            logger.info(
-                f"{remote_addr} [{username}] {method} {path} "
-                f"→ {status_code[0]} ({elapsed:.3f}s)"
+            self._logger.info(
+                "%s [%s] %s %s -> %s (%.3fs)",
+                remote_addr,
+                username,
+                method,
+                path,
+                status_code[0],
+                elapsed,
             )
