@@ -84,6 +84,10 @@ async def create_mount(
     user=Depends(check_basic_permission("can_manage_mounts")),
     db: AsyncSession = Depends(get_db),
 ):
+    is_admin = user.role and user.role.name == "admin"
+    if body.type == "local" and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="服务器本地文件系统挂载仅管理员可创建")
+
     mount = await mount_service.create_mount(
         db, body.name, body.type, body.config, body.advanced_config,
         user_id=user.id,
@@ -119,6 +123,8 @@ async def update_mount(
     existing = await mount_service.get_mount(db, mount_id)
     if not is_admin and existing.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能编辑自己创建的挂载")
+    if existing.type == "local" and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="服务器本地文件系统挂载仅管理员可编辑")
     mount = await mount_service.update_mount(
         db, mount_id,
         name=body.name,

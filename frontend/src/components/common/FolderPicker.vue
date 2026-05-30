@@ -1,9 +1,16 @@
 <template>
-  <el-dialog :model-value="modelValue" title="选择文件夹" class="responsive-dialog folder-picker-dialog" @update:model-value="$emit('update:modelValue', $event)" @open="init">
+  <el-dialog :model-value="modelValue" title="选择服务器文件夹" class="responsive-dialog folder-picker-dialog" @update:model-value="$emit('update:modelValue', $event)" @open="init">
+    <el-alert
+      class="server-folder-alert"
+      type="info"
+      show-icon
+      :closable="false"
+      title="当前列表来自后端服务器文件系统，浏览器所在设备的本地目录不会出现在这里。"
+    />
     <!-- 当前路径 -->
     <div class="path-bar">
       <el-icon class="nav-btn" @click="goUp" :disabled="!currentPath"><Top /></el-icon>
-      <el-input v-model="manualPath" class="path-input" size="small" placeholder="输入路径后回车" @keyup.enter="navigateTo(manualPath)" />
+      <el-input v-model="manualPath" class="path-input" size="small" placeholder="输入服务器路径后回车" @keyup.enter="navigateTo(manualPath)" />
       <el-button size="small" @click="navigateTo(manualPath)" :loading="loading">前往</el-button>
     </div>
 
@@ -96,6 +103,7 @@ function confirm() {
 
 <style scoped>
 .path-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.server-folder-alert { margin-bottom: 12px; }
 .path-input { flex: 1; min-width: 0; }
 .nav-btn { cursor: pointer; font-size: 18px; color: var(--primary-color); flex-shrink: 0; }
 .nav-btn[disabled] { opacity: 0.3; cursor: not-allowed; }

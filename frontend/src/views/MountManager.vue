@@ -119,8 +119,15 @@
       <!-- 步骤2: 配置参数 -->
       <el-form v-if="addStep === 1" :model="addForm.config" label-width="120px">
         <template v-if="addForm.type === 'local'">
+          <el-alert
+            type="info"
+            show-icon
+            :closable="false"
+            title="此处选择的是服务器上的本地文件夹，不是浏览器所在电脑的文件夹。"
+            class="local-mount-hint"
+          />
           <el-form-item label="目录路径" required>
-            <el-input v-model="addForm.config.path" placeholder="点击右侧按钮选择文件夹">
+            <el-input v-model="addForm.config.path" placeholder="选择服务器上的目录路径">
               <template #append>
                 <el-button :icon="FolderOpened" @click="showFolderPicker = true" />
               </template>
@@ -293,14 +300,16 @@ const requestMount = ref(null)
 const requestLevel = ref('read')
 const requesting = ref(false)
 
-const mountTypes = [
-  { value: 'local', label: '本地文件系统', icon: FolderOpened },
+const allMountTypes = [
+  { value: 'local', label: '服务器本地文件系统', icon: FolderOpened },
   { value: 'ftp', label: 'FTP', icon: Connection },
   { value: 'sftp', label: 'SFTP', icon: Connection },
   { value: 'webdav', label: 'WebDAV', icon: Monitor },
   { value: 'oss', label: '阿里云 OSS', icon: Cloudy },
   { value: 's3', label: 'Amazon S3', icon: Cloudy },
 ]
+
+const mountTypes = computed(() => allMountTypes.filter((type) => auth.isAdmin || type.value !== 'local'))
 
 const defaultConfig = () => ({
   type: '', name: '',
@@ -906,6 +915,9 @@ onMounted(async () => {
 .type-card.selected span {
   color: var(--primary-color);
   font-weight: 600;
+}
+.local-mount-hint {
+  margin-bottom: 12px;
 }
 
 :deep(.mount-dialog .el-steps) {
