@@ -66,12 +66,15 @@
               <strong>{{ formatTime(mount.last_connected_at) }}</strong>
             </div>
           </div>
-          <div class="capacity-meter" v-if="mount.capacity_total">
+          <div class="capacity-meter" v-if="hasFileStats(mount)">
             <div class="capacity-copy">
-              <span>容量</span>
-              <strong>{{ formatSize(mount.capacity_used) }} / {{ formatSize(mount.capacity_total) }}</strong>
+              <span>文件数量</span>
+              <strong>{{ formatFileCount(mount.capacity_used) }}</strong>
             </div>
-            <el-progress :percentage="capacityPercent(mount)" :stroke-width="6" :show-text="false" />
+            <div class="capacity-copy">
+              <span>总大小</span>
+              <strong>{{ formatSize(mount.capacity_total || 0) }}</strong>
+            </div>
           </div>
         </div>
         <div class="card-footer">
@@ -118,7 +121,20 @@
 
       <!-- 步骤2: 配置参数 -->
       <el-form v-if="addStep === 1" :model="addForm.config" label-width="120px">
-        <template v-if="addForm.type === 'local'">
+        <template v-if="addForm.type === 'managed'">
+          <el-alert
+            type="success"
+            show-icon
+            :closable="false"
+            title="新建空挂载点"
+            class="local-mount-hint"
+          />
+          <div class="managed-mount-preview">
+            <span>目录名称</span>
+            <strong>{{ addForm.name || '下一步填写挂载名称后生成' }}</strong>
+          </div>
+        </template>
+        <template v-else-if="addForm.type === 'local'">
           <el-alert
             type="info"
             show-icon
@@ -301,6 +317,7 @@ const requestLevel = ref('read')
 const requesting = ref(false)
 
 const allMountTypes = [
+  { value: 'managed', label: '挂载点', icon: FolderOpened },
   { value: 'local', label: '服务器本地文件系统', icon: FolderOpened },
   { value: 'ftp', label: 'FTP', icon: Connection },
   { value: 'sftp', label: 'SFTP', icon: Connection },
@@ -333,8 +350,8 @@ const filteredMounts = computed(() => {
 
 const onlineMountCount = computed(() => mounts.mounts.filter((m) => m.status === 'online').length)
 
-const typeIcon = (t) => ({ local: FolderOpened, ftp: Connection, sftp: Connection, webdav: Monitor, oss: Cloudy, s3: Cloudy }[t] || Connection)
-const typeLabel = (t) => ({ local: '本地存储', ftp: 'FTP', sftp: 'SFTP', webdav: 'WebDAV', oss: '阿里云 OSS', s3: 'Amazon S3' }[t] || t)
+const typeIcon = (t) => ({ managed: FolderOpened, local: FolderOpened, ftp: Connection, sftp: Connection, webdav: Monitor, oss: Cloudy, s3: Cloudy }[t] || Connection)
+const typeLabel = (t) => ({ managed: '挂载点', local: '服务器本地存储', ftp: 'FTP', sftp: 'SFTP', webdav: 'WebDAV', oss: '阿里云 OSS', s3: 'Amazon S3' }[t] || t)
 const statusLabel = (s) => ({ online: '在线', offline: '离线', connecting: '连接中' }[s] || s)
 const statusTagType = (s) => ({ online: 'success', offline: 'danger', connecting: 'warning' }[s] || 'info')
 const levelLabel = (l) => ({ read: '只读', readwrite: '读写', none: '无权限' }[l] || l)
@@ -342,19 +359,23 @@ const levelTagType = (l) => ({ read: 'info', readwrite: 'success', none: 'danger
 
 function mountEndpoint(mount) {
   const cfg = mount.config || {}
+  if (mount.type === 'managed') return 'MountHub 托管目录'
   const base = cfg.host || cfg.url || cfg.path || cfg.bucket || '-'
   return cfg.port ? `${base}:${cfg.port}` : base
 }
 
 function mountPath(mount) {
   const cfg = mount.config || {}
+  if (mount.type === 'managed') return cfg.directory_name || cfg.path || '/'
   return cfg.path || cfg.prefix || cfg.endpoint || cfg.endpoint_url || '/'
 }
 
-function capacityPercent(mount) {
-  const total = Number(mount.capacity_total) || 0
-  if (!total) return 0
-  return Math.min(100, Math.round(((Number(mount.capacity_used) || 0) / total) * 100))
+function hasFileStats(mount) {
+  return mount.capacity_used != null || mount.capacity_total != null
+}
+
+function formatFileCount(value) {
+  return `${Number(value) || 0} 个`
 }
 
 // 权限判断
@@ -873,7 +894,7 @@ onMounted(async () => {
 
 .type-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -918,6 +939,23 @@ onMounted(async () => {
 }
 .local-mount-hint {
   margin-bottom: 12px;
+}
+.managed-mount-preview {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--success-color) 24%, var(--border-color));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--success-color) 8%, transparent);
+}
+.managed-mount-preview span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.managed-mount-preview strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 :deep(.mount-dialog .el-steps) {

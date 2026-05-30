@@ -11,6 +11,11 @@ class LocalConfig(MountConfig):
     path: str = Field(..., description="本地目录路径")
 
 
+class ManagedConfig(MountConfig):
+    path: str = Field(..., description="系统托管挂载目录路径")
+    directory_name: str = Field(..., description="系统生成的目录名")
+
+
 class FTPConfig(MountConfig):
     host: str
     port: int = 21
@@ -55,7 +60,7 @@ class S3Config(MountConfig):
 
 class MountCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
-    type: str = Field(..., pattern="^(local|ftp|sftp|webdav|oss|s3)$")
+    type: str = Field(..., pattern="^(managed|local|ftp|sftp|webdav|oss|s3)$")
     config: dict
     advanced_config: dict | None = None
 

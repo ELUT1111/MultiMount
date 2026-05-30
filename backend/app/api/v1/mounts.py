@@ -11,6 +11,18 @@ from app.core.mount_permissions import check_basic_permission
 from app.services.mount_permission_service import check_mount_access
 
 router = APIRouter()
+_SAFE_AUTO_STATS_TYPES = {"managed", "local"}
+
+
+async def _refresh_safe_stats(mounts, db: AsyncSession) -> None:
+    """响应前刷新可安全本地统计的挂载，远程挂载避免在列表页递归扫描。"""
+    refreshed = False
+    for mount in mounts:
+        if mount.type in _SAFE_AUTO_STATS_TYPES:
+            await mount_service.refresh_mount_stats(mount)
+            refreshed = True
+    if refreshed:
+        await db.flush()
 
 
 def _mount_to_out(mount) -> MountOut:
@@ -67,6 +79,10 @@ async def list_mounts(
 ):
     all_mounts = await mount_service.list_mounts(db)
     out = [_mount_to_out(m) for m in all_mounts]
+    out = await _enrich_my_level(out, user, db)
+    readable_ids = {m.id for m in out if m.my_level != "none"}
+    await _refresh_safe_stats([m for m in all_mounts if m.id in readable_ids], db)
+    out = [_mount_to_out(m) for m in all_mounts]
     out = await _enrich_owner_names(out, db)
     out = await _enrich_my_level(out, user, db)
     for mount in out:
@@ -105,6 +121,7 @@ async def get_mount(
 ):
     await check_mount_access(db, mount_id, user, "read")
     mount = await mount_service.get_mount(db, mount_id)
+    await _refresh_safe_stats([mount], db)
     out = _mount_to_out(mount)
     out = (await _enrich_owner_names([out], db))[0]
     out = (await _enrich_my_level([out], user, db))[0]
@@ -125,12 +142,16 @@ async def update_mount(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能编辑自己创建的挂载")
     if existing.type == "local" and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="服务器本地文件系统挂载仅管理员可编辑")
+    config = body.config
+    if existing.type == "managed":
+        config = None
     mount = await mount_service.update_mount(
         db, mount_id,
         name=body.name,
-        config=body.config,
+        config=config,
         advanced_config=body.advanced_config,
     )
+    await _refresh_safe_stats([mount], db)
     return _mount_to_out(mount)
 
 

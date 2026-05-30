@@ -88,12 +88,12 @@ const menuItems = computed(() =>
   auth.isAdmin ? allMenuItems : allMenuItems.filter((i) => !i.adminOnly)
 )
 
-const iconMap = { local: FolderOpened, ftp: Connection, sftp: Connection, webdav: Monitor, oss: Cloudy, s3: Cloudy }
+const iconMap = { managed: FolderOpened, local: FolderOpened, ftp: Connection, sftp: Connection, webdav: Monitor, oss: Cloudy, s3: Cloudy }
 function mountTypeIcon(type) { return iconMap[type] || Connection }
 
 // 按类型分组挂载资源
-const typeOrder = ['local', 'ftp', 'sftp', 'webdav', 'oss', 's3']
-const typeLabels = { local: '本地存储', ftp: 'FTP', sftp: 'SFTP', webdav: 'WebDAV', oss: '阿里云 OSS', s3: 'Amazon S3' }
+const typeOrder = ['managed', 'local', 'ftp', 'sftp', 'webdav', 'oss', 's3']
+const typeLabels = { managed: '挂载点', local: '服务器本地存储', ftp: 'FTP', sftp: 'SFTP', webdav: 'WebDAV', oss: '阿里云 OSS', s3: 'Amazon S3' }
 const groupedMounts = computed(() => {
   const map = {}
   for (const m of mounts.accessibleMounts) {

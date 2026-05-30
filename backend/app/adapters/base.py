@@ -97,3 +97,26 @@ class BaseAdapter(ABC):
     async def get_capacity(self) -> dict | None:
         """获取存储容量信息 {used, total}, 不支持则返回 None"""
         return None
+
+    async def get_tree_stats(self, root: str = "/") -> dict:
+        """递归统计目录树中的文件数量与文件总大小。"""
+        file_count = 0
+        total_size = 0
+        stack = [root]
+        visited = 0
+        max_dirs = 10000
+
+        while stack:
+            current = stack.pop()
+            visited += 1
+            if visited > max_dirs:
+                break
+
+            for item in await self.list_dir(current):
+                if item.is_dir:
+                    stack.append(item.path)
+                else:
+                    file_count += 1
+                    total_size += item.size or 0
+
+        return {"file_count": file_count, "total_size": total_size}

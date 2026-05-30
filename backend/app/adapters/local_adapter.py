@@ -28,6 +28,7 @@ def _to_file_info(path: Path, base: Path) -> FileInfo:
 
 
 @AdapterRegistry.register("local")
+@AdapterRegistry.register("managed")
 class LocalAdapter(BaseAdapter):
     """本地文件系统适配器"""
 
@@ -128,3 +129,13 @@ class LocalAdapter(BaseAdapter):
     async def get_capacity(self) -> dict | None:
         usage = shutil.disk_usage(str(self._root))
         return {"used": usage.used, "total": usage.total}
+
+    async def get_tree_stats(self, root: str = "/") -> dict:
+        real_root = self._resolve(root)
+        file_count = 0
+        total_size = 0
+        for entry in real_root.rglob("*"):
+            if entry.is_file():
+                file_count += 1
+                total_size += entry.stat().st_size
+        return {"file_count": file_count, "total_size": total_size}

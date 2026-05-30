@@ -14,14 +14,33 @@ import {
 const MULTIPART_THRESHOLD = 16 * 1024 * 1024
 const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024
 
+function joinPath(base, child) {
+  const cleanBase = (base || '/').replace(/\/+$/, '')
+  const cleanChild = String(child || '').replace(/^\/+/, '')
+  if (!cleanChild) return cleanBase || '/'
+  if (!cleanBase || cleanBase === '/') return `/${cleanChild}`
+  return `${cleanBase}/${cleanChild}`
+}
+
+function baseName(path) {
+  return String(path || '').replace(/\\/g, '/').split('/').filter(Boolean).pop() || '未命名文件'
+}
+
+function parentPath(path) {
+  const normalized = String(path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+  if (!normalized || normalized === '/') return '/'
+  const index = normalized.lastIndexOf('/')
+  return index > 0 ? normalized.slice(0, index) : '/'
+}
+
 export function useUpload() {
   const uploading = ref(false)
   const progress = ref(0)
   const currentFile = ref('')
 
-  async function uploadDirect(mountId, dirPath, file, conflictPolicy) {
+  async function uploadDirect(mountId, dirPath, file, conflictPolicy, uploadName) {
     const formData = new FormData()
-    formData.append('file', file)
+    formData.append('file', file, uploadName)
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
@@ -53,11 +72,11 @@ export function useUpload() {
     })
   }
 
-  async function uploadMultipart(mountId, dirPath, file, conflictPolicy) {
+  async function uploadMultipart(mountId, dirPath, file, conflictPolicy, uploadName) {
     let uploadId = ''
     let uploadedBytes = 0
     const init = await initMultipartUpload(mountId, {
-      filename: file.name,
+      filename: uploadName,
       path: dirPath,
       size: file.size,
       chunk_size: DEFAULT_CHUNK_SIZE,
@@ -72,7 +91,7 @@ export function useUpload() {
         const start = index * chunkSize
         const end = Math.min(start + chunkSize, file.size)
         const formData = new FormData()
-        formData.append('chunk', file.slice(start, end), file.name)
+        formData.append('chunk', file.slice(start, end), uploadName)
 
         await uploadMultipartChunk(mountId, uploadId, index, formData, (e) => {
           const chunkLoaded = e.lengthComputable ? e.loaded : 0
@@ -102,18 +121,27 @@ export function useUpload() {
   async function upload(mountId, dirPath, file, options = {}) {
     uploading.value = true
     progress.value = 0
-    currentFile.value = file.name
+    const targetPath = options.targetPath || null
+    const targetDirPath = options.targetDirPath || (targetPath ? parentPath(targetPath) : dirPath)
+    const uploadName = baseName(options.filename || (targetPath ? baseName(targetPath) : file.name))
+    const displayName = options.displayName || file.name
+    currentFile.value = displayName
     const conflictPolicy = options.conflictPolicy || 'error'
+    const silent = options.silent || false
 
     try {
       const result = file.size >= MULTIPART_THRESHOLD
-        ? await uploadMultipart(mountId, dirPath, file, conflictPolicy)
-        : await uploadDirect(mountId, dirPath, file, conflictPolicy)
+        ? await uploadMultipart(mountId, targetDirPath, file, conflictPolicy, uploadName)
+        : await uploadDirect(mountId, targetDirPath, file, conflictPolicy, uploadName)
 
-      ElMessage.success(`上传成功: ${file.name}`)
+      if (!silent) {
+        ElMessage.success(`上传成功: ${displayName}`)
+      }
       return result
     } catch (err) {
-      ElMessage.error(`上传失败: ${err.message}`)
+      if (!silent) {
+        ElMessage.error(`上传失败: ${err.message}`)
+      }
       throw err
     } finally {
       uploading.value = false

@@ -1,4 +1,6 @@
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +14,9 @@ from app.models.mount import Mount
 
 # 敏感配置字段列表 — 存储时加密, 返回时脱敏
 _SENSITIVE_KEYS = {"password", "access_key_secret", "private_key"}
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+MANAGED_MOUNT_ROOT = PROJECT_ROOT / "mount_points"
+_INVALID_DIR_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def _encrypt_config(config: dict) -> dict:
@@ -56,25 +61,49 @@ def _get_adapter(mount: Mount) -> BaseAdapter:
     return AdapterRegistry.create(mount.type, config)
 
 
+def _safe_managed_dir_base(name: str) -> str:
+    cleaned = _INVALID_DIR_CHARS.sub("_", name).strip().strip(".")
+    return cleaned or "未命名挂载"
+
+
+def _create_managed_mount_dir(name: str) -> Path:
+    MANAGED_MOUNT_ROOT.mkdir(parents=True, exist_ok=True)
+    base = _safe_managed_dir_base(name)
+    for index in range(0, 1000):
+        dirname = base if index == 0 else f"{base}（{index}）"
+        path = MANAGED_MOUNT_ROOT / dirname
+        try:
+            path.mkdir()
+            return path
+        except FileExistsError:
+            continue
+    raise BadRequestException("无法创建托管挂载目录，请更换挂载名称")
+
+
 async def _refresh_mount_capacity(mount: Mount) -> None:
     adapter = _get_adapter(mount)
     try:
         await adapter.connect()
-        capacity = await adapter.get_capacity()
+        stats = await adapter.get_tree_stats("/")
     except Exception:
-        capacity = None
+        stats = None
     finally:
         try:
             await adapter.disconnect()
         except Exception:
             pass
 
-    if capacity:
-        mount.capacity_used = capacity.get("used")
-        mount.capacity_total = capacity.get("total")
+    if stats:
+        mount.capacity_used = stats.get("file_count")
+        mount.capacity_total = stats.get("total_size")
     else:
         mount.capacity_used = None
         mount.capacity_total = None
+
+
+async def refresh_mount_stats(mount: Mount) -> None:
+    """刷新挂载的文件统计信息。"""
+    await _refresh_mount_capacity(mount)
 
 
 async def list_mounts(db: AsyncSession) -> list[Mount]:
@@ -97,6 +126,14 @@ async def create_mount(db: AsyncSession, name: str, mount_type: str,
     if mount_type not in AdapterRegistry.supported_types():
         raise BadRequestException(f"不支持的挂载类型: {mount_type}")
 
+    if mount_type == "managed":
+        mount_dir = _create_managed_mount_dir(name)
+        config = {
+            "path": str(mount_dir),
+            "directory_name": mount_dir.name,
+            "managed": True,
+        }
+
     mount = Mount(
         name=name,
         type=mount_type,
@@ -107,6 +144,9 @@ async def create_mount(db: AsyncSession, name: str, mount_type: str,
     db.add(mount)
     await db.flush()
     await db.refresh(mount)
+    if mount_type == "managed":
+        await _refresh_mount_capacity(mount)
+        await db.flush()
     return mount
 
 

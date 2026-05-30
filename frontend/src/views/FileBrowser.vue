@@ -26,6 +26,18 @@
         <el-upload :show-file-list="false" :before-upload="handleUpload" multiple :disabled="!canWriteCurrentMount">
           <el-button type="primary" :icon="UploadFilled" :disabled="!canWriteCurrentMount">上传文件</el-button>
         </el-upload>
+        <el-button :icon="FolderOpened" @click="triggerFolderUpload" :disabled="!canWriteCurrentMount">
+          上传文件夹
+        </el-button>
+        <input
+          ref="folderUploadInput"
+          type="file"
+          webkitdirectory
+          directory
+          multiple
+          hidden
+          @change="handleFolderUploadChange"
+        />
         <el-dropdown trigger="click">
           <el-button :icon="MoreFilled">更多</el-button>
           <template #dropdown>
@@ -415,7 +427,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Delete, Document, Download, Edit, Folder, FolderAdd, MoreFilled, Share, UploadFilled, View } from '@element-plus/icons-vue'
+import { CopyDocument, Delete, Document, Download, Edit, Folder, FolderAdd, FolderOpened, MoreFilled, Share, UploadFilled, View } from '@element-plus/icons-vue'
 import { batchDownloadZip, batchFileOperation, deleteFile, createDirectory, moveFile, downloadFile, createShareLink, getDirectoryStats } from '@/api/files'
 import { createTransfer } from '@/api/transfers'
 import { formatSize, formatTime } from '@/utils/format'
@@ -441,6 +453,7 @@ const appPrefs = useAppStore()
 
 const contextMenuRef = ref()
 const fileTableRef = ref()
+const folderUploadInput = ref(null)
 const dragging = ref(false)
 const showPreview = ref(false)
 const previewFile = ref(null)
@@ -1171,6 +1184,121 @@ function handleUpload(file) {
   }
   upload.upload(files.currentMountId, files.currentPath, file).then(() => files.refresh())
   return false // 阻止 el-upload 自动上传
+}
+
+function joinPath(base, child) {
+  const cleanBase = (base || '/').replace(/\/+$/, '')
+  const cleanChild = String(child || '').replace(/^\/+/, '')
+  if (!cleanChild) return cleanBase || '/'
+  if (!cleanBase || cleanBase === '/') return `/${cleanChild}`
+  return `${cleanBase}/${cleanChild}`
+}
+
+function baseName(path) {
+  return String(path || '').replace(/\\/g, '/').split('/').filter(Boolean).pop() || '未命名文件'
+}
+
+function parentPath(path) {
+  const normalized = String(path || '').replace(/\/+$/, '')
+  if (!normalized || normalized === '/') return '/'
+  const index = normalized.lastIndexOf('/')
+  return index > 0 ? normalized.slice(0, index) : '/'
+}
+
+function collectRelativeParentPaths(relativePath) {
+  const parents = []
+  const segments = String(relativePath || '').replace(/\\/g, '/').split('/').filter(Boolean)
+  segments.pop()
+  while (segments.length > 0) {
+    const current = segments.join('/')
+    if (!parents.includes(current)) {
+      parents.push(current)
+    }
+    segments.pop()
+  }
+  return parents.reverse()
+}
+
+function collectTargetDirs(basePath, relativePath) {
+  return collectRelativeParentPaths(relativePath).map((dir) => joinPath(basePath, dir))
+}
+
+function normalizeUploadName(path) {
+  return baseName(path)
+}
+
+function triggerFolderUpload() {
+  if (!canWriteCurrentMount.value) {
+    ElMessage.warning('当前挂载没有上传权限')
+    return
+  }
+  if (folderUploadInput.value) {
+    folderUploadInput.value.value = ''
+    folderUploadInput.value.click()
+  }
+}
+
+async function handleFolderUploadChange(event) {
+  const input = event.target
+  const pickedFiles = Array.from(input.files || [])
+  input.value = ''
+  if (!pickedFiles.length) return
+  if (!canWriteCurrentMount.value) {
+    ElMessage.warning('当前挂载没有上传权限')
+    return
+  }
+
+  const entries = pickedFiles.map((file) => {
+    const relativePath = file.webkitRelativePath || file.name
+    const targetPath = joinPath(files.currentPath, relativePath)
+    return {
+      file,
+      relativePath,
+      targetPath,
+      parents: collectTargetDirs(files.currentPath, relativePath),
+      uploadName: normalizeUploadName(relativePath),
+    }
+  })
+
+  const directorySet = new Set()
+  for (const entry of entries) {
+    for (const parent of entry.parents) {
+      directorySet.add(parent)
+    }
+  }
+
+  try {
+    for (const dir of [...directorySet].sort((a, b) => a.split('/').length - b.split('/').length)) {
+      if (dir !== files.currentPath) {
+        await createDirectory(files.currentMountId, dir)
+      }
+    }
+
+    let successCount = 0
+    let failedCount = 0
+    for (const entry of entries) {
+      try {
+        await upload.upload(files.currentMountId, files.currentPath, entry.file, {
+          targetDirPath: parentPath(entry.targetPath),
+          filename: entry.uploadName,
+          displayName: entry.relativePath,
+          silent: true,
+        })
+        successCount += 1
+      } catch {
+        failedCount += 1
+      }
+    }
+
+    if (successCount || failedCount) {
+      const parts = [`已上传 ${successCount} 个文件`]
+      if (failedCount) parts.push(`${failedCount} 个失败`)
+      ElMessage[failedCount ? 'warning' : 'success'](parts.join('，'))
+    }
+    files.refresh()
+  } finally {
+    input.value = ''
+  }
 }
 
 // ── 拖拽上传 ──────────────────────────────────────────────
