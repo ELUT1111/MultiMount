@@ -4,16 +4,14 @@
 -->
 <template>
   <div class="user-manager">
-    <div class="page-header">
-      <div class="header-copy">
-        <h2>用户与权限管理</h2>
-        <div class="header-meta">
-          <span>{{ users.length }} 个用户</span>
-          <span>{{ activeUserCount }} 个启用</span>
-          <span>{{ roles.length }} 个角色</span>
-        </div>
-      </div>
-    </div>
+    <PageHeader
+      title="用户与权限管理"
+      :meta="[
+        `${users.length} 个用户`,
+        `${activeUserCount} 个启用`,
+        `${roles.length} 个角色`,
+      ]"
+    />
 
     <el-tabs v-model="activeTab" class="manager-tabs">
       <!-- 用户管理 -->
@@ -60,6 +58,7 @@ import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listUsers, createUser, deleteUser, updateUser, listRoles, updateRole, createRole } from '@/api/users'
 import { useMountsStore } from '@/stores/mounts'
+import PageHeader from '@/components/common/PageHeader.vue'
 import UserTable from '@/components/user/UserTable.vue'
 import UserForm from '@/components/user/UserForm.vue'
 import RolePermission from '@/components/user/RolePermission.vue'
@@ -176,32 +175,6 @@ onMounted(() => { fetchUsers(); fetchRoles(); mounts.fetchMounts() })
   flex-direction: column;
   gap: 18px;
 }
-.page-header {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr);
-  gap: 16px;
-}
-.header-copy {
-  min-width: 0;
-}
-.page-header h2 {
-  margin-bottom: 8px;
-  font-size: 22px;
-  line-height: 1.25;
-}
-.header-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-.header-meta span {
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  background: var(--card-bg);
-  padding: 3px 10px;
-}
 .manager-tabs {
   min-width: 0;
 }
@@ -296,9 +269,6 @@ onMounted(() => { fetchUsers(); fetchRoles(); mounts.fetchMounts() })
 @media (max-width: 768px) {
   .user-manager {
     gap: 14px;
-  }
-  .page-header h2 {
-    font-size: 20px;
   }
   .role-list {
     grid-template-columns: 1fr;

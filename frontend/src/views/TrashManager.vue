@@ -1,15 +1,14 @@
 <template>
   <div class="trash-manager">
-    <div class="page-header">
-      <div class="header-copy">
-        <h2>回收站</h2>
-        <div class="header-meta">
-          <span>{{ filteredItems.length }} / {{ items.length }} 个项目</span>
-          <span>{{ formatSize(totalTrashSize) }}</span>
-          <span>{{ stats.length }} 个挂载源</span>
-        </div>
-      </div>
-      <div class="header-actions responsive-filters">
+    <PageHeader
+      title="回收站"
+      :meta="[
+        `${filteredItems.length} / ${items.length} 个项目`,
+        formatSize(totalTrashSize),
+        `${stats.length} 个挂载源`,
+      ]"
+    >
+      <template #actions>
         <el-select v-model="mountFilter" placeholder="挂载源" clearable>
           <el-option
             v-for="mount in mounts.mounts"
@@ -26,8 +25,8 @@
           <el-option label="报错" value="error" />
         </el-select>
         <el-button :icon="Refresh" @click="fetchTrash" :loading="loading">刷新</el-button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div class="stats-row">
       <div v-for="stat in stats" :key="stat.mount_id" class="stat-card">
@@ -38,18 +37,15 @@
       <el-empty v-if="!stats.length && !loading" description="暂无回收站统计" :image-size="48" />
     </div>
 
-    <div v-if="selectedItems.length" class="batch-toolbar">
-      <span>已选择 {{ selectedItems.length }} 个项目</span>
-      <div class="batch-actions">
-        <el-button size="small" type="primary" plain :icon="RefreshLeft" @click="handleBatchRestore">
-          恢复
-        </el-button>
-        <el-button size="small" type="danger" plain :icon="Delete" @click="handleBatchPurge">
-          彻底删除
-        </el-button>
-        <el-button size="small" @click="clearSelection">清空选择</el-button>
-      </div>
-    </div>
+    <BatchToolbar v-if="selectedItems.length" :summary="`已选择 ${selectedItems.length} 个项目`">
+      <el-button size="small" type="primary" plain :icon="RefreshLeft" @click="handleBatchRestore">
+        恢复
+      </el-button>
+      <el-button size="small" type="danger" plain :icon="Delete" @click="handleBatchPurge">
+        彻底删除
+      </el-button>
+      <el-button size="small" @click="clearSelection">清空选择</el-button>
+    </BatchToolbar>
 
     <div class="maintenance-panel">
       <div class="maintenance-fields">
@@ -131,6 +127,8 @@ import { Delete, Document, Folder, Refresh, RefreshLeft } from '@element-plus/ic
 import { clearTrash, getTrashStats, listTrashItems, purgeTrashItem, restoreTrashItem } from '@/api/trash'
 import { formatSize, formatTime } from '@/utils/format'
 import { useMountsStore } from '@/stores/mounts'
+import BatchToolbar from '@/components/common/BatchToolbar.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 
 const mounts = useMountsStore()
 const loading = ref(false)
@@ -256,45 +254,6 @@ onMounted(async () => {
   flex-direction: column;
   gap: 18px;
 }
-.page-header {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(520px, 760px);
-  gap: 16px;
-  align-items: end;
-}
-.header-copy {
-  min-width: 0;
-}
-.page-header h2 {
-  margin-bottom: 8px;
-  font-size: 22px;
-  line-height: 1.25;
-}
-.header-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-.header-meta span {
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  background: var(--card-bg);
-  padding: 3px 10px;
-}
-.header-actions.responsive-filters {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(132px, 1fr));
-  gap: 10px;
-  align-items: center;
-}
-.header-actions :deep(.el-input),
-.header-actions :deep(.el-select),
-.header-actions :deep(.el-button) {
-  width: 100%;
-  min-width: 0;
-}
 .stats-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
@@ -349,18 +308,6 @@ onMounted(async () => {
   gap: 8px;
   flex-wrap: wrap;
 }
-.batch-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 14px;
-  background: rgba(64,158,255,0.08);
-  border: 1px solid rgba(64,158,255,0.18);
-  border-radius: 8px;
-  font-size: 13px;
-}
-.batch-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .table-shell {
   overflow: hidden;
   border: 1px solid var(--border-color);
@@ -421,7 +368,6 @@ onMounted(async () => {
 :deep(.operation-column .cell) { padding-left: 6px; padding-right: 6px; }
 
 @media (max-width: 1180px) {
-  .page-header,
   .maintenance-panel {
     grid-template-columns: 1fr;
     align-items: start;
@@ -435,19 +381,12 @@ onMounted(async () => {
   .trash-manager {
     gap: 14px;
   }
-  .page-header h2 {
-    font-size: 20px;
-  }
-  .header-actions.responsive-filters,
   .maintenance-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .maintenance-fields > :deep(.el-button) {
     grid-column: 1 / -1;
   }
-  .batch-toolbar { align-items: flex-start; flex-direction: column; }
-  .batch-actions { width: 100%; }
-  .batch-actions :deep(.el-button) { flex: 1 1 120px; }
   .danger-actions :deep(.el-button) {
     flex: 1 1 150px;
   }
@@ -455,7 +394,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 480px) {
-  .header-actions.responsive-filters,
   .maintenance-fields {
     grid-template-columns: 1fr;
   }

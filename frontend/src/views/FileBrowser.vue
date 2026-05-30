@@ -6,12 +6,21 @@
   <div class="file-browser" @dragenter.prevent="onDragEnter" @dragover.prevent="onDragOver" @dragleave="onDragLeave" @drop.prevent="onDrop">
     <!-- 顶部工具栏 (搜索模式下隐藏) -->
     <div v-if="!search.searched" class="file-toolbar">
-      <el-breadcrumb separator="/">
-        <el-breadcrumb-item v-for="(crumb, i) in breadcrumbs" :key="i">
-          <a v-if="i < breadcrumbs.length - 1" @click="navigateTo(crumb.path)">{{ crumb.name }}</a>
-          <span v-else>{{ crumb.name }}</span>
-        </el-breadcrumb-item>
-      </el-breadcrumb>
+      <div class="path-panel">
+        <div class="mount-context">
+          <span class="mount-status-dot" :class="currentMount?.status || 'offline'" />
+          <div class="mount-copy">
+            <span class="mount-label">{{ currentMountName }}</span>
+            <span class="mount-subline">{{ files.currentPath || '/' }} · {{ displayFiles.length }} 项</span>
+          </div>
+        </div>
+        <el-breadcrumb class="path-breadcrumb" separator="/">
+          <el-breadcrumb-item v-for="(crumb, i) in breadcrumbs" :key="i">
+            <a v-if="i < breadcrumbs.length - 1" @click="navigateTo(crumb.path)">{{ crumb.name }}</a>
+            <span v-else>{{ crumb.name }}</span>
+          </el-breadcrumb-item>
+        </el-breadcrumb>
+      </div>
       <div class="toolbar-actions">
         <el-button :icon="FolderAdd" @click="handleMkdir" :disabled="!canWriteCurrentMount">新建文件夹</el-button>
         <el-upload :show-file-list="false" :before-upload="handleUpload" multiple :disabled="!canWriteCurrentMount">
@@ -36,41 +45,38 @@
       </div>
     </div>
 
-    <div v-if="selectionActive" class="batch-toolbar">
-      <span>已选择 {{ selectedFiles.length }} 个项目</span>
-      <div class="batch-actions">
-        <el-button size="small" :icon="Download" @click="handleBatchDownload" :disabled="!selectedFiles.length">
-          下载
-        </el-button>
-        <el-button size="small" :icon="CopyDocument" @click="handleBatchCopy" :disabled="!selectedFiles.length || !canWriteCurrentMount">
-          复制
-        </el-button>
-        <el-button size="small" @click="handleBatchMove" :disabled="!selectedFiles.length || !canWriteCurrentMount">
-          移动
-        </el-button>
-        <el-button size="small" @click="handleBatchRename" :disabled="!selectedFiles.length || !canWriteCurrentMount">
-          重命名
-        </el-button>
-        <el-button size="small" :icon="Share" @click="handleBatchShare" :disabled="!selectedFiles.length">
-          分享
-        </el-button>
-        <el-dropdown trigger="click" @command="handleSelectionCommand">
-          <el-button size="small" :disabled="!displayFiles.length">选择</el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="invert">反选</el-dropdown-item>
-              <el-dropdown-item command="files">仅文件</el-dropdown-item>
-              <el-dropdown-item command="dirs">仅目录</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-button size="small" @click="clearSelection" :disabled="!selectedFiles.length">清空选择</el-button>
-        <el-button size="small" type="danger" plain @click="handleBatchDelete" :disabled="!selectedFiles.length">
-          删除
-        </el-button>
-        <el-button v-if="batchMode" size="small" @click="toggleBatchMode">退出批量</el-button>
-      </div>
-    </div>
+    <BatchToolbar v-if="selectionActive" class="file-batch-toolbar" :summary="`已选择 ${selectedFiles.length} 个项目`">
+      <el-button size="small" :icon="Download" @click="handleBatchDownload" :disabled="!selectedFiles.length">
+        下载
+      </el-button>
+      <el-button size="small" :icon="CopyDocument" @click="handleBatchCopy" :disabled="!selectedFiles.length || !canWriteCurrentMount">
+        复制
+      </el-button>
+      <el-button size="small" @click="handleBatchMove" :disabled="!selectedFiles.length || !canWriteCurrentMount">
+        移动
+      </el-button>
+      <el-button size="small" @click="handleBatchRename" :disabled="!selectedFiles.length || !canWriteCurrentMount">
+        重命名
+      </el-button>
+      <el-button size="small" :icon="Share" @click="handleBatchShare" :disabled="!selectedFiles.length">
+        分享
+      </el-button>
+      <el-dropdown trigger="click" @command="handleSelectionCommand">
+        <el-button size="small" :disabled="!displayFiles.length">选择</el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="invert">反选</el-dropdown-item>
+            <el-dropdown-item command="files">仅文件</el-dropdown-item>
+            <el-dropdown-item command="dirs">仅目录</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+      <el-button size="small" @click="clearSelection" :disabled="!selectedFiles.length">清空选择</el-button>
+      <el-button size="small" type="danger" plain @click="handleBatchDelete" :disabled="!selectedFiles.length">
+        删除
+      </el-button>
+      <el-button v-if="batchMode" size="small" @click="toggleBatchMode">退出批量</el-button>
+    </BatchToolbar>
 
     <!-- 搜索模式工具栏 -->
     <div v-if="search.searched" class="search-toolbar">
@@ -177,6 +183,12 @@
                   {{ sortRuleFor('name').order }} {{ sortRuleFor('name').direction === 'asc' ? 'ASC' : 'DESC' }}
                 </span>
               </button>
+            </template>
+            <template #default="{ row }">
+              <div class="file-name-cell">
+                <span class="file-name-main">{{ row.name }}</span>
+                <span class="file-name-sub">{{ row.is_dir ? '文件夹' : (row.mime_type || '文件') }}</span>
+              </div>
             </template>
           </el-table-column>
           <el-table-column v-if="columnVisible('size')" label="大小" :width="columnWidth('size')" :fixed="columnFixed('size')" class-name="hide-sm" label-class-name="hide-sm">
@@ -294,7 +306,7 @@
             </div>
             <div class="card-name" :title="file.name">{{ file.name }}</div>
             <div class="card-meta">
-              <span v-if="!file.is_dir">{{ formatSize(file.size) }}</span>
+              <span>{{ file.is_dir ? '文件夹' : formatSize(file.size) }}</span>
               <span v-if="file.modified_at" class="card-time">{{ formatTime(file.modified_at) }}</span>
             </div>
           </div>
@@ -390,8 +402,11 @@
 
     <!-- 上传进度 -->
     <div v-if="upload.uploading.value" class="upload-bar">
-      <span>正在上传: {{ upload.currentFile.value }}</span>
-      <el-progress :percentage="upload.progress.value" :stroke-width="6" style="flex: 1" />
+      <div class="upload-copy">
+        <span>正在上传</span>
+        <strong>{{ upload.currentFile.value }}</strong>
+      </div>
+      <el-progress :percentage="upload.progress.value" :stroke-width="8" style="flex: 1" />
     </div>
   </div>
 </template>
@@ -413,6 +428,7 @@ import DetailPanel from '@/components/layout/DetailPanel.vue'
 import FileContextMenu from '@/components/file/FileContextMenu.vue'
 import FilePreview from '@/components/file/FilePreview.vue'
 import FileThumbnail from '@/components/file/FileThumbnail.vue'
+import BatchToolbar from '@/components/common/BatchToolbar.vue'
 import UnifiedState from '@/components/common/UnifiedState.vue'
 
 const route = useRoute()
@@ -1282,35 +1298,122 @@ onBeforeUnmount(() => {
 <style scoped>
 .file-browser { display: flex; flex-direction: column; gap: 12px; height: 100%; position: relative; }
 .file-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; background: var(--card-bg); border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  background:
+    linear-gradient(135deg, rgba(64,158,255,0.08), transparent 42%),
+    var(--card-bg);
+  border: 1px solid rgba(64,158,255,0.12);
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(31,45,61,0.06);
 }
-.toolbar-actions { display: flex; align-items: center; gap: 8px; }
-.batch-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px; background: rgba(64,158,255,0.08); border: 1px solid rgba(64,158,255,0.18);
-  border-radius: 8px; color: var(--text-regular); font-size: 13px;
+.path-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.batch-actions { display: flex; align-items: center; gap: 8px; }
+.mount-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.mount-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--danger-color);
+  box-shadow: 0 0 0 4px rgba(245,108,108,0.12);
+}
+.mount-status-dot.online {
+  background: var(--success-color);
+  box-shadow: 0 0 0 4px rgba(103,194,58,0.14), 0 0 12px rgba(103,194,58,0.38);
+}
+.mount-status-dot.connecting {
+  background: var(--warning-color);
+  box-shadow: 0 0 0 4px rgba(230,162,60,0.14);
+}
+.mount-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mount-label {
+  color: var(--text-primary);
+  font-weight: 700;
+  font-size: 15px;
+}
+.mount-subline {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.path-breadcrumb {
+  max-width: min(58vw, 720px);
+}
+.path-breadcrumb :deep(.el-breadcrumb__inner a),
+.path-breadcrumb :deep(.el-breadcrumb__inner) {
+  font-size: 13px;
+}
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.toolbar-actions :deep(.el-button) {
+  border-radius: 8px;
+  font-weight: 600;
+}
+.file-batch-toolbar {
+  position: relative;
+  z-index: 2;
+}
 .field-hint { margin-left: 10px; color: var(--text-secondary); font-size: 12px; }
 .file-content-wrapper { flex: 1; display: flex; gap: 12px; min-height: 0; }
 .file-content {
-  flex: 1; padding: 16px; background: var(--card-bg); border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06); overflow: auto;
+  flex: 1;
+  padding: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(31,45,61,0.05);
+  overflow: auto;
 }
-.file-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.file-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
 .file-card {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
-  padding: 16px 8px; border-radius: 8px; cursor: pointer; transition: all 0.2s;
-  border: 2px solid transparent;
+  min-height: 142px;
+  padding: 16px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  border: 1px solid transparent;
+  background: linear-gradient(180deg, rgba(248,250,252,0.8), rgba(255,255,255,0.95));
 }
-.file-card:hover { background: rgba(64,158,255,0.08); }
+.file-card:hover {
+  border-color: rgba(64,158,255,0.26);
+  background: rgba(64,158,255,0.07);
+  box-shadow: 0 8px 22px rgba(31,45,61,0.1);
+  transform: translateY(-1px);
+}
 .file-card:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--primary-color) 65%, transparent);
   outline-offset: 2px;
 }
-.file-card.selected { border-color: var(--primary-color); background: rgba(64,158,255,0.06); }
+.file-card.selected {
+  border-color: var(--primary-color);
+  background: rgba(64,158,255,0.1);
+  box-shadow: inset 0 0 0 1px rgba(64,158,255,0.18), 0 8px 22px rgba(64,158,255,0.12);
+}
 :deep(.selected-row > td) {
   background: rgba(64,158,255,0.08) !important;
 }
@@ -1318,13 +1421,33 @@ onBeforeUnmount(() => {
   background: rgba(64,158,255,0.12) !important;
 }
 .card-name {
-  font-size: 13px; text-align: center; width: 100%;
+  font-size: 13px; text-align: center; width: 100%; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .card-meta { font-size: 11px; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .card-time { font-size: 10px; color: var(--text-secondary); opacity: 0.7; }
 .card-checkbox { position: absolute; top: 6px; left: 6px; }
 .file-card { position: relative; }
+.file-name-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.file-name-main {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-name-sub {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* 拖拽上传遮罩 */
 .drag-overlay {
@@ -1343,9 +1466,36 @@ onBeforeUnmount(() => {
 /* 上传进度条 */
 .upload-bar {
   position: fixed; bottom: 20px; right: 20px; left: calc(var(--sidebar-width, 240px) + 40px); z-index: 200;
-  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
-  background: var(--card-bg); border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px;
+  border: 1px solid rgba(64,158,255,0.18);
+  background: rgba(255,255,255,0.94);
+  backdrop-filter: blur(12px);
+  border-radius: 12px; box-shadow: 0 12px 34px rgba(31,45,61,0.16);
   font-size: 13px;
+}
+.upload-copy {
+  min-width: min(240px, 42vw);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.upload-copy span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.upload-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dark .file-card {
+  background: linear-gradient(180deg, rgba(30,41,59,0.78), rgba(15,23,42,0.94));
+}
+
+.dark .upload-bar {
+  background: rgba(26,26,26,0.94);
 }
 
 /* 搜索工具栏 */
@@ -1476,18 +1626,10 @@ onBeforeUnmount(() => {
   .toolbar-actions :deep(.el-upload .el-button) {
     width: 100%;
   }
-  .batch-toolbar {
+  .file-batch-toolbar {
     position: sticky;
     top: 0;
     z-index: 10;
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .batch-actions {
-    width: 100%;
-    justify-content: flex-end;
-    flex-wrap: wrap;
   }
   .file-content-wrapper { display: block; }
   .file-content { padding: 10px; }

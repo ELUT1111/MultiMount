@@ -1,15 +1,14 @@
 <template>
   <div class="share-manager">
-    <div class="page-header">
-      <div class="header-copy">
-        <h2>分享链接</h2>
-        <div class="header-meta">
-          <span>{{ filteredShares.length }} / {{ shares.length }} 条分享</span>
-          <span>{{ activeShareCount }} 条启用</span>
-          <span>{{ expiredShareCount }} 条过期</span>
-        </div>
-      </div>
-      <div class="header-actions responsive-filters">
+    <PageHeader
+      title="分享链接"
+      :meta="[
+        `${filteredShares.length} / ${shares.length} 条分享`,
+        `${activeShareCount} 条启用`,
+        `${expiredShareCount} 条过期`,
+      ]"
+    >
+      <template #actions>
         <el-select v-model="statusFilter" placeholder="状态" clearable>
           <el-option label="启用中" value="active" />
           <el-option label="已停用" value="inactive" />
@@ -19,16 +18,13 @@
         <el-input v-model.number="mountFilter" placeholder="挂载 ID" clearable />
         <el-button v-if="auth.isAdmin" @click="openPolicy">安全策略</el-button>
         <el-button :icon="Refresh" @click="fetchShares" :loading="loading">刷新</el-button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
-    <div v-if="selectedShares.length" class="batch-toolbar">
-      <span>已选择 {{ selectedShares.length }} 条分享</span>
-      <div class="batch-actions">
-        <el-button size="small" @click="handleBatch('deactivate')">批量停用</el-button>
-        <el-button size="small" type="danger" plain @click="handleBatch('delete')">批量删除</el-button>
-      </div>
-    </div>
+    <BatchToolbar v-if="selectedShares.length" :summary="`已选择 ${selectedShares.length} 条分享`">
+      <el-button size="small" @click="handleBatch('deactivate')">批量停用</el-button>
+      <el-button size="small" type="danger" plain @click="handleBatch('delete')">批量删除</el-button>
+    </BatchToolbar>
 
     <div class="table-shell">
       <el-table
@@ -174,6 +170,8 @@ import {
 } from '@/api/shares'
 import { formatTime } from '@/utils/format'
 import { useAuthStore } from '@/stores/auth'
+import BatchToolbar from '@/components/common/BatchToolbar.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 
 const auth = useAuthStore()
 const loading = ref(false)
@@ -298,63 +296,6 @@ onMounted(fetchShares)
   flex-direction: column;
   gap: 18px;
 }
-.page-header {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(560px, 820px);
-  gap: 16px;
-  align-items: end;
-}
-.header-copy {
-  min-width: 0;
-}
-.page-header h2 {
-  margin-bottom: 8px;
-  font-size: 22px;
-  line-height: 1.25;
-}
-.header-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-.header-meta span {
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  background: var(--card-bg);
-  padding: 3px 10px;
-}
-.header-actions.responsive-filters {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(112px, 1fr));
-  gap: 10px;
-  align-items: center;
-}
-.header-actions :deep(.el-input),
-.header-actions :deep(.el-select),
-.header-actions :deep(.el-button) {
-  width: 100%;
-  min-width: 0;
-}
-.batch-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: rgba(64, 158, 255, 0.08);
-  border: 1px solid rgba(64, 158, 255, 0.18);
-  color: var(--text-regular);
-  font-size: 13px;
-}
-.batch-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 .table-shell {
   overflow: hidden;
   border: 1px solid var(--border-color);
@@ -429,37 +370,9 @@ onMounted(fetchShares)
  :deep(.share-policy-dialog .el-input-number) {
   width: 180px;
 }
-@media (max-width: 1180px) {
-  .page-header {
-    grid-template-columns: 1fr;
-    align-items: start;
-  }
-  .header-actions.responsive-filters {
-    grid-template-columns: repeat(5, minmax(112px, 1fr));
-  }
-}
 @media (max-width: 768px) {
   .share-manager {
     gap: 14px;
-  }
-  .page-header {
-    gap: 12px;
-  }
-  .page-header h2 {
-    font-size: 20px;
-  }
-  .header-actions.responsive-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .batch-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .batch-actions {
-    width: 100%;
-  }
-  .batch-actions :deep(.el-button) {
-    flex: 1 1 120px;
   }
   .file-path { max-width: 220px; }
   :deep(.share-dialog .el-form-item),
@@ -478,11 +391,6 @@ onMounted(fetchShares)
   .field-hint {
     display: block;
     margin: 6px 0 0;
-  }
-}
-@media (max-width: 480px) {
-  .header-actions.responsive-filters {
-    grid-template-columns: 1fr;
   }
 }
 </style>

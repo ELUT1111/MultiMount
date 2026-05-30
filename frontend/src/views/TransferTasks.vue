@@ -1,15 +1,22 @@
 <template>
   <div class="transfer-tasks">
-    <div class="page-header">
-      <h2>传输任务</h2>
-      <div class="header-actions">
+    <PageHeader
+      title="传输任务"
+      :meta="[
+        `${runningCount} 个进行中`,
+        `${completedCount} 个已完成`,
+        `${failedCount} 个失败`,
+      ]"
+      actions-layout="flex"
+    >
+      <template #actions>
         <el-button @click="transfers.fetchTasks()" :icon="Refresh">刷新</el-button>
         <el-button @click="handleBatchPause" :disabled="!transfers.activeCount">全部暂停</el-button>
         <el-button type="primary" @click="handleBatchResume">全部继续</el-button>
         <el-button type="danger" plain @click="handleBatchCancel" :disabled="!runningCount">全部取消</el-button>
         <el-button @click="handleClearCompleted" :disabled="!completedCount">清除已完成</el-button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <el-tabs v-model="transfers.activeTab">
       <el-tab-pane name="running">
@@ -67,6 +74,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTransfersStore } from '@/stores/transfers'
 import { buildWebSocketUrl, useWebSocket } from '@/composables/useWebSocket'
 import { formatSpeed } from '@/utils/format'
+import PageHeader from '@/components/common/PageHeader.vue'
 import TransferCard from '@/components/transfer/TransferCard.vue'
 
 const transfers = useTransfersStore()
@@ -126,9 +134,6 @@ onMounted(() => {
 
 <style scoped>
 .transfer-tasks { display: flex; flex-direction: column; gap: 16px; height: 100%; }
-.page-header { display: flex; justify-content: space-between; align-items: center; }
-.page-header h2 { font-size: 20px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .task-list { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
 .transfer-footer {
   display: flex; gap: 24px; align-items: center; padding: 12px 16px;

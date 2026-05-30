@@ -3,15 +3,14 @@
 -->
 <template>
   <div class="mount-manager">
-    <div class="page-header">
-      <div class="header-copy">
-        <h2>挂载管理</h2>
-        <div class="header-meta">
-          <span>{{ filteredMounts.length }} / {{ mounts.mounts.length }} 个挂载</span>
-          <span>{{ onlineMountCount }} 个在线</span>
-        </div>
-      </div>
-      <div class="header-actions responsive-filters">
+    <PageHeader
+      title="挂载管理"
+      :meta="[
+        `${filteredMounts.length} / ${mounts.mounts.length} 个挂载`,
+        `${onlineMountCount} 个在线`,
+      ]"
+    >
+      <template #actions>
         <el-select v-model="filterType" placeholder="按类型筛选" clearable size="default">
           <el-option v-for="t in mountTypes" :key="t.value" :label="t.label" :value="t.value" />
         </el-select>
@@ -21,8 +20,8 @@
         </el-select>
         <el-button @click="mounts.fetchMounts(true)" :icon="Refresh">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="showAddDialog = true">添加挂载</el-button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div v-loading="mounts.loading" class="mount-grid">
       <el-empty v-if="!mounts.loading && filteredMounts.length === 0" class="mount-empty" description="暂无挂载点" />
@@ -257,6 +256,7 @@ import { useMountsStore } from '@/stores/mounts'
 import { useAuthStore } from '@/stores/auth'
 import { formatSize, formatTime } from '@/utils/format'
 import FolderPicker from '@/components/common/FolderPicker.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import { getMountPermissions, grantPermission, revokePermission, requestAccess, getMountRequesters } from '@/api/mount_permissions'
 import { listAllUsers } from '@/api/users'
 
@@ -627,51 +627,6 @@ onMounted(async () => {
   gap: 18px;
 }
 
-.page-header {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(520px, 760px);
-  gap: 16px;
-  align-items: end;
-}
-
-.header-copy {
-  min-width: 0;
-}
-
-.page-header h2 {
-  font-size: 22px;
-  line-height: 1.25;
-  margin-bottom: 8px;
-}
-
-.header-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.header-meta span {
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  background: var(--card-bg);
-  padding: 3px 10px;
-}
-
-.header-actions.responsive-filters {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(132px, 1fr));
-  gap: 10px;
-  align-items: center;
-}
-
-.header-actions :deep(.el-select),
-.header-actions :deep(.el-button) {
-  width: 100%;
-  min-width: 0;
-}
-
 .mount-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
@@ -1036,33 +991,9 @@ onMounted(async () => {
   width: 100%;
 }
 
-@media (max-width: 1100px) {
-  .page-header {
-    grid-template-columns: 1fr;
-    align-items: start;
-  }
-
-  .header-actions.responsive-filters {
-    width: 100%;
-    grid-template-columns: repeat(4, minmax(120px, 1fr));
-  }
-}
-
 @media (max-width: 768px) {
   .mount-manager {
     gap: 14px;
-  }
-
-  .page-header {
-    gap: 12px;
-  }
-
-  .page-header h2 {
-    font-size: 20px;
-  }
-
-  .header-actions.responsive-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .mount-grid {
@@ -1134,7 +1065,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 480px) {
-  .header-actions.responsive-filters,
   .type-grid {
     grid-template-columns: 1fr;
   }
