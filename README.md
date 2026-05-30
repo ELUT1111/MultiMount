@@ -7,24 +7,56 @@
 - Python >= 3.11
 - Node.js >= 18
 
-## 快速启动
+## 开发启动
 
-### 1. 后端
+### Windows
+
+后端:
+
+```powershell
+cd backend
+
+# 创建虚拟环境
+python -m venv venv
+
+# 激活虚拟环境
+venv\Scripts\activate
+
+# 安装依赖
+pip install -e .
+
+# 复制环境配置
+copy .env.example .env
+
+# 启动服务
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8014 --reload
+```
+
+前端:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+### Linux / macOS
+
+后端:
 
 ```bash
 cd backend
 
 # 创建虚拟环境
-python -m venv venv
-# Windows
-venv\Scripts\activate
-# macOS/Linux
+python3 -m venv venv
+
+# 激活虚拟环境
 source venv/bin/activate
 
 # 安装依赖
 pip install -e .
 
-# 复制环境配置 (可按需修改)
+# 复制环境配置
 cp .env.example .env
 
 # 启动服务
@@ -36,21 +68,17 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8014 --reload
 - 初始化默认角色 (admin / user / readonly)
 - 创建默认管理员账号
 
-### 2. 前端
+前端:
 
 ```bash
 cd frontend
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
 npm run dev
 ```
 
 访问 http://localhost:5173 ，前端通过 `VITE_API_BASE_URL` 连接后端 `http://localhost:8014`。也可以使用 Vite 代理将 `/api` 请求转发到后端 `http://127.0.0.1:8014`。
 
-### 3. 默认管理员账号
+### 默认管理员账号
 
 | 账号 | 用户名 | 密码 |
 |------|--------|------|
@@ -91,16 +119,138 @@ VITE_API_BASE_URL=http://localhost:8014
 
 ## 生产部署
 
+生产环境建议使用 Nginx 托管前端构建产物，并将 `/api/` 反向代理到后端。项目内提供了 Nginx 模板:
+
+```text
+deploy/nginx/mounthub.conf.example
+```
+
+这个模板不会自动生效，需要复制到服务器的 Nginx 配置目录并按实际域名、路径修改。
+
+### Windows 本机预览
+
+Windows 更适合开发和本机预览。可以分别启动后端和前端:
+
+```powershell
+cd backend
+venv\Scripts\activate
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8014
+```
+
+```powershell
+cd frontend
+npm run build
+npm run preview
+```
+
+如需在 Windows 上用生产方式部署，也建议使用独立的 Web 服务器托管 `frontend/dist`，并把 `/api/` 代理到后端。
+
+### Linux 单机生产部署
+
 ```bash
-# 构建前端
-cd frontend && npm run build
+# 代码目录示例
+sudo mkdir -p /opt/mounthub
+sudo chown -R "$USER":"$USER" /opt/mounthub
+cd /opt/mounthub
 
-# 将构建产物复制到后端静态目录
-cp -r dist/* ../backend/static/
+# 拉取或复制本项目代码后，安装后端依赖
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+cp .env.example .env
+```
 
-# 以生产模式启动后端 (自动托管前端)
-cd ../backend
-DEBUG=false python -m uvicorn app.main:app --host 0.0.0.0 --port 8014
+修改 `backend/.env`，生产环境至少需要:
+
+```ini
+DEBUG=false
+APP_HOST=127.0.0.1
+APP_PORT=8014
+DATABASE_URL=sqlite+aiosqlite:///./data/multimount.db
+JWT_SECRET_KEY=请替换为随机长密钥
+ENCRYPTION_KEY=请替换为固定的 Fernet 密钥
+CORS_ORIGINS=["https://your-domain.example"]
+```
+
+生成 Fernet 密钥示例:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+构建前端:
+
+```bash
+cd /opt/mounthub/frontend
+npm install
+npm run build
+```
+
+启动后端:
+
+```bash
+cd /opt/mounthub/backend
+source venv/bin/activate
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8014
+```
+
+### Nginx 配置
+
+复制模板:
+
+```bash
+sudo cp /opt/mounthub/deploy/nginx/mounthub.conf.example /etc/nginx/sites-available/mounthub
+sudo ln -s /etc/nginx/sites-available/mounthub /etc/nginx/sites-enabled/mounthub
+```
+
+编辑 `/etc/nginx/sites-available/mounthub`:
+
+- 将 `server_name example.com;` 改为你的域名或服务器 IP
+- 将 `root /opt/mounthub/frontend/dist;` 改为实际前端构建目录
+- 如启用 HTTPS，使用模板中的 HTTPS 示例并配置证书路径
+
+检查并重载 Nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Nginx 模板包含:
+
+- `try_files $uri $uri/ /index.html`，支持 Vue Router 刷新不 404
+- `/api/` 反向代理到 `127.0.0.1:8014`
+- WebSocket `Upgrade` / `Connection` 头
+- 大文件上传的 `client_max_body_size` 和 `proxy_request_buffering off`
+
+### systemd 后台运行示例
+
+可以在服务器创建 `/etc/systemd/system/mounthub.service`:
+
+```ini
+[Unit]
+Description=MountHub Backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mounthub/backend
+Environment=PATH=/opt/mounthub/backend/venv/bin
+ExecStart=/opt/mounthub/backend/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8014
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启用服务:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now mounthub
+sudo systemctl status mounthub
 ```
 
 ## 功能说明
@@ -172,6 +322,9 @@ DEBUG=false python -m uvicorn app.main:app --host 0.0.0.0 --port 8014
 
 ```
 MountHub/
+├── deploy/
+│   └── nginx/
+│       └── mounthub.conf.example # Nginx 生产部署模板
 ├── backend/
 │   ├── app/
 │   │   ├── adapters/          # 存储协议适配器 (local/ftp/sftp/webdav/oss/s3)
