@@ -176,7 +176,13 @@ watch(visible, async (val) => {
   overflow: auto;
 }
 .preview-image { max-width: 100%; max-height: 74vh; object-fit: contain; margin: auto; }
-.preview-frame { width: 100%; min-height: 70vh; border: 0; border-radius: 6px; background: #f5f7fa; }
+.preview-frame {
+  width: 100%;
+  min-height: 70vh;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--border-color) 35%, transparent);
+}
 .preview-media { width: 100%; max-height: 70vh; background: #111; border-radius: 6px; }
 .preview-audio { width: min(640px, 100%); margin: auto; }
 .text-preview-shell { width: 100%; display: flex; flex-direction: column; gap: 8px; }
@@ -186,7 +192,9 @@ watch(visible, async (val) => {
   max-height: 68vh;
   overflow: auto;
   padding: 16px;
-  background: #f5f7fa;
+  color: var(--text-regular);
+  background: color-mix(in srgb, var(--border-color) 30%, transparent);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   font-size: 13px;
   font-family: Consolas, Monaco, monospace;
@@ -203,7 +211,7 @@ watch(visible, async (val) => {
 .preview-markdown :deep(code) {
   padding: 2px 5px;
   border-radius: 4px;
-  background: #f1f2f4;
+  background: color-mix(in srgb, var(--border-color) 36%, transparent);
   font-family: Consolas, Monaco, monospace;
 }
 .preview-unsupported { width: 100%; text-align: center; color: var(--text-secondary); align-self: center; }

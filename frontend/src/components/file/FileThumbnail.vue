@@ -57,7 +57,7 @@ onBeforeUnmount(cleanup)
   place-items: center;
   border-radius: 6px;
   overflow: hidden;
-  background: #f5f7fa;
+  background: color-mix(in srgb, var(--border-color) 35%, transparent);
 }
 .thumbnail img {
   width: 100%;

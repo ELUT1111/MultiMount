@@ -205,7 +205,8 @@ onMounted(() => {
   border-radius: 12px;
   padding: 24px;
   margin-bottom: 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border: 1px solid var(--border-color);
 }
 .section-title {
   font-size: 15px;

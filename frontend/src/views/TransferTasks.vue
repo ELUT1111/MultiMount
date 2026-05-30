@@ -18,6 +18,32 @@
       </template>
     </PageHeader>
 
+    <section class="transfer-overview" aria-label="传输概览">
+      <div class="overview-card speed-card">
+        <span class="overview-label">实时速度</span>
+        <strong>{{ formatSpeed(transfers.totalTransferSpeed) }}</strong>
+        <small>{{ wsConnected ? 'WebSocket 实时同步' : '等待同步连接' }}</small>
+      </div>
+      <div class="overview-card active-card">
+        <span class="overview-label">活跃任务</span>
+        <strong>{{ transfers.activeCount }}</strong>
+        <small>{{ queuedCount }} 个排队，{{ pausedCount }} 个暂停</small>
+      </div>
+      <div class="overview-card complete-card">
+        <span class="overview-label">完成率</span>
+        <strong>{{ completionRate }}%</strong>
+        <small>{{ completedCount }} / {{ transfers.tasks.length || 0 }} 个任务</small>
+      </div>
+      <div class="overview-card sync-card" :class="wsConnected ? 'is-online' : 'is-offline'">
+        <span class="overview-label">同步状态</span>
+        <strong>
+          <span class="ws-dot" :class="wsConnected ? 'connected' : 'disconnected'" />
+          {{ wsConnected ? '在线' : '离线' }}
+        </strong>
+        <small>{{ failedCount ? `${failedCount} 个任务需要处理` : '当前无异常任务' }}</small>
+      </div>
+    </section>
+
     <el-tabs v-model="transfers.activeTab">
       <el-tab-pane name="running">
         <template #label>
@@ -37,7 +63,7 @@
     </el-tabs>
 
     <div v-loading="transfers.loading" class="task-list">
-      <el-empty v-if="!transfers.loading && transfers.filteredTasks.length === 0" description="暂无复制/移动任务" />
+      <el-empty v-if="!transfers.loading && transfers.filteredTasks.length === 0" :description="emptyDescription" />
 
       <TransferCard
         v-for="task in transfers.filteredTasks"
@@ -87,6 +113,17 @@ const activeStatuses = ['queued', 'pending', 'running', 'paused']
 const runningCount = computed(() => transfers.tasks.filter((t) => activeStatuses.includes(t.status)).length)
 const completedCount = computed(() => transfers.tasks.filter((t) => t.status === 'completed').length)
 const failedCount = computed(() => transfers.tasks.filter((t) => t.status === 'failed').length)
+const queuedCount = computed(() => transfers.tasks.filter((t) => ['queued', 'pending'].includes(t.status)).length)
+const pausedCount = computed(() => transfers.tasks.filter((t) => t.status === 'paused').length)
+const completionRate = computed(() => {
+  if (!transfers.tasks.length) return 0
+  return Math.round((completedCount.value / transfers.tasks.length) * 100)
+})
+const emptyDescription = computed(() => ({
+  running: '暂无进行中的复制/移动任务',
+  completed: '暂无已完成任务',
+  failed: '暂无失败任务',
+}[transfers.activeTab] || '暂无复制/移动任务'))
 
 watch(wsData, (val) => {
   if (val?.type === 'transfer_progress') {
@@ -134,15 +171,80 @@ onMounted(() => {
 
 <style scoped>
 .transfer-tasks { display: flex; flex-direction: column; gap: 16px; height: 100%; }
-.task-list { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.transfer-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.overview-card {
+  position: relative;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.overview-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--primary-color);
+}
+.speed-card::before { background: var(--primary-color); }
+.active-card::before { background: var(--warning-color); }
+.complete-card::before { background: var(--success-color); }
+.sync-card::before { background: var(--danger-color); }
+.sync-card.is-online::before { background: var(--success-color); }
+.overview-label {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.overview-card strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--text-regular);
+  font-size: 24px;
+  line-height: 1.15;
+}
+.overview-card small {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.task-list { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: auto; padding-right: 2px; }
 .transfer-footer {
   display: flex; gap: 24px; align-items: center; padding: 12px 16px;
-  background: var(--card-bg); border-radius: 8px; font-size: 13px; color: var(--text-regular);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; font-size: 13px; color: var(--text-regular);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }
 .stat { display: flex; align-items: center; gap: 6px; }
 .ws-status { margin-left: auto; }
-.ws-dot { width: 8px; height: 8px; border-radius: 50%; }
-.ws-dot.connected { background: var(--success-color); }
-.ws-dot.disconnected { background: var(--danger-color); }
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-flex;
+  flex: 0 0 8px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 16%, transparent);
+}
+.ws-dot.connected { background: var(--success-color); color: var(--success-color); }
+.ws-dot.disconnected { background: var(--danger-color); color: var(--danger-color); }
+
+@media (max-width: 1100px) {
+  .transfer-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .transfer-overview { grid-template-columns: 1fr; }
+  .transfer-footer { flex-wrap: wrap; gap: 10px 16px; }
+  .ws-status { margin-left: 0; }
+}
 </style>
