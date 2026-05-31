@@ -38,6 +38,10 @@
           hidden
           @change="handleFolderUploadChange"
         />
+        <el-button :icon="CopyDocument" @click="toggleBatchMode">
+          {{ batchMode ? '退出批量' : '批量选择' }}
+        </el-button>
+        <el-button :icon="Refresh" @click="files.refresh()">刷新</el-button>
         <el-dropdown trigger="click">
           <el-button :icon="MoreFilled">更多</el-button>
           <template #dropdown>
@@ -49,8 +53,6 @@
               <el-dropdown-item divided @click="files.setSortBy('name')">按名称排序</el-dropdown-item>
               <el-dropdown-item @click="files.setSortBy('size')">按大小排序</el-dropdown-item>
               <el-dropdown-item @click="files.setSortBy('modified')">按修改时间排序</el-dropdown-item>
-              <el-dropdown-item divided @click="toggleBatchMode">批量选择</el-dropdown-item>
-              <el-dropdown-item @click="files.refresh()">刷新</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -61,10 +63,10 @@
       <el-button size="small" :icon="Download" @click="handleBatchDownload" :disabled="!selectedFiles.length">
         下载
       </el-button>
-      <el-button size="small" :icon="CopyDocument" @click="handleBatchCopy" :disabled="!selectedFiles.length || !canWriteCurrentMount">
+      <el-button size="small" :icon="CopyDocument" @click="handleBatchCopy" :disabled="!selectedFiles.length || !writableMounts.length">
         复制
       </el-button>
-      <el-button size="small" @click="handleBatchMove" :disabled="!selectedFiles.length || !canWriteCurrentMount">
+      <el-button size="small" @click="handleBatchMove" :disabled="!selectedFiles.length || !writableMounts.length">
         移动
       </el-button>
       <el-button size="small" @click="handleBatchRename" :disabled="!selectedFiles.length || !canWriteCurrentMount">
@@ -390,6 +392,71 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="showSingleMoveDialog" title="移动到目标路径" width="560px" append-to-body class="responsive-dialog move-dialog">
+      <el-form label-width="88px">
+        <el-form-item label="当前文件">
+          <div class="move-source">
+            <strong>{{ singleMoveFile?.name }}</strong>
+            <span>{{ singleMoveFile?.path }}</span>
+          </div>
+        </el-form-item>
+        <el-form-item label="目标挂载">
+          <el-select
+            v-model="singleMoveTargetMountId"
+            class="move-mount-select"
+            filterable
+            placeholder="选择目标挂载点"
+          >
+            <el-option
+              v-for="mount in writableMounts"
+              :key="mount.id"
+              :label="mount.name"
+              :value="mount.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标路径">
+          <el-input
+            v-model="singleMoveTargetPath"
+            placeholder="输入挂载点内完整目标路径，如 /docs/file.txt"
+            clearable
+            @keyup.enter="submitSingleMove"
+          >
+            <template #append>
+              <el-button :icon="FolderOpened" @click.stop.prevent="openSingleMovePicker">选择目录</el-button>
+            </template>
+          </el-input>
+          <div class="field-hint move-hint">选择目录后会自动保留原文件名；目标挂载不同时会创建传输任务。</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSingleMoveDialog = false">取消</el-button>
+        <el-button type="primary" :loading="singleMoveSubmitting" :disabled="!singleMoveTargetMountId" @click="submitSingleMove">确认移动</el-button>
+      </template>
+    </el-dialog>
+
+    <MountPathPicker
+      v-model="showSingleMovePicker"
+      title="选择移动目标目录"
+      confirm-text="使用此目录"
+      :mounts="writableMounts"
+      :mount-id="singleMoveTargetMountId"
+      :path="parentPath(singleMoveTargetPath || singleMoveFile?.path)"
+      :allow-mount-select="true"
+      @confirm="handleSingleMoveDirectory"
+    />
+
+    <MountPathPicker
+      v-model="showTargetPathPicker"
+      :title="targetPathPickerOptions.title"
+      :confirm-text="targetPathPickerOptions.confirmText"
+      :mounts="targetPathPickerOptions.mounts"
+      :mount-id="targetPathPickerOptions.mountId"
+      :path="targetPathPickerOptions.path"
+      :allow-mount-select="targetPathPickerOptions.allowMountSelect"
+      @confirm="handleTargetPathConfirm"
+    />
+
     <el-dialog v-model="showShortcutDialog" title="快捷键说明" width="520px" append-to-body class="responsive-dialog shortcut-dialog">
       <div class="shortcut-grid">
         <div v-for="item in shortcutItems" :key="item.keys" class="shortcut-row">
@@ -440,7 +507,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Delete, Document, Download, Edit, Folder, FolderAdd, FolderOpened, MoreFilled, Share, UploadFilled, View } from '@element-plus/icons-vue'
+import { CopyDocument, Delete, Document, Download, Edit, Folder, FolderAdd, FolderOpened, MoreFilled, Refresh, Share, UploadFilled, View } from '@element-plus/icons-vue'
 import { batchDownloadZip, batchFileOperation, deleteFile, createDirectory, moveFile, downloadFile, createShareLink, getDirectoryStats } from '@/api/files'
 import { createTransfer } from '@/api/transfers'
 import { formatSize, formatTime } from '@/utils/format'
@@ -454,6 +521,7 @@ import DetailPanel from '@/components/layout/DetailPanel.vue'
 import FileContextMenu from '@/components/file/FileContextMenu.vue'
 import FilePreview from '@/components/file/FilePreview.vue'
 import FileThumbnail from '@/components/file/FileThumbnail.vue'
+import MountPathPicker from '@/components/file/MountPathPicker.vue'
 import BatchToolbar from '@/components/common/BatchToolbar.vue'
 import UnifiedState from '@/components/common/UnifiedState.vue'
 
@@ -494,6 +562,24 @@ const showBatchResultDialog = ref(false)
 const batchResultRows = ref([])
 const showShortcutDialog = ref(false)
 const showColumnDialog = ref(false)
+const showSingleMoveDialog = ref(false)
+const showSingleMovePicker = ref(false)
+const singleMoveFile = ref(null)
+const singleMoveTargetMountId = ref(null)
+const singleMoveTargetPath = ref('/')
+const singleMoveSubmitting = ref(false)
+const showTargetPathPicker = ref(false)
+const targetPathPickerOptions = ref({
+  title: '选择目标目录',
+  confirmText: '确认选择',
+  mounts: [],
+  mountId: null,
+  path: '/',
+  allowMountSelect: true,
+})
+const targetPathPickerConfirmed = ref(false)
+let targetPathPickerResolver = null
+let targetPathPickerRejecter = null
 
 const configurableColumns = [
   { key: 'size', label: '大小' },
@@ -518,6 +604,7 @@ const shortcutItems = [
 
 const currentMount = computed(() => mounts.mounts.find((m) => m.id === files.currentMountId) || null)
 const canWriteCurrentMount = computed(() => currentMount.value?.my_level === 'readwrite')
+const writableMounts = computed(() => mounts.accessibleMounts.filter((mount) => mount.my_level === 'readwrite'))
 const emptyState = computed(() => {
   if (!mounts.accessibleMounts.length) {
     return {
@@ -926,24 +1013,28 @@ async function handleBatchDownload() {
 }
 
 async function runBatchTransfer(action) {
+  if (!selectedFiles.value.length) return
   const groups = groupSelectedByMount()
-  const targetMountId = await chooseTargetMountId(action)
+  const defaultMountId = files.currentMountId || Number(Object.keys(groups)[0]) || writableMounts.value[0]?.id
+  const target = await chooseTargetLocation({
+    title: action === 'copy' ? '批量复制到目标挂载点' : '批量移动到目标挂载点',
+    confirmText: action === 'copy' ? '确认复制到此处' : '确认移动到此处',
+    mountId: writableMounts.value.some((mount) => mount.id === defaultMountId) ? defaultMountId : writableMounts.value[0]?.id,
+    path: files.currentPath,
+  })
+  const targetMountId = target.mountId
   if (Object.keys(groups).length !== 1) {
-    await runCrossMountTransfers(action, targetMountId)
+    await runCrossMountTransfers(action, targetMountId, target.path)
     return
   }
-  const { value } = await ElMessageBox.prompt('请输入目标目录路径', action === 'copy' ? '批量复制' : '批量移动', {
-    inputValue: files.currentPath,
-    inputValidator: (v) => !!v.trim() || '路径不能为空',
-  })
   const mountId = Number(Object.keys(groups)[0])
   if (targetMountId && targetMountId !== mountId) {
-    await runCrossMountTransfers(action, targetMountId, value.trim())
+    await runCrossMountTransfers(action, targetMountId, target.path)
     return
   }
   const res = await batchFileOperation(mountId, {
     action,
-    target_dir: value.trim(),
+    target_dir: target.path,
     conflict_policy: 'rename',
     items: groups[mountId].map((file) => ({ path: file.path })),
   })
@@ -952,14 +1043,40 @@ async function runBatchTransfer(action) {
   resetBatchAfterChange()
 }
 
-async function chooseTargetMountId(action) {
-  if (!mounts.accessibleMounts.length) return files.currentMountId
-  const options = mounts.accessibleMounts.map((m) => `${m.id}: ${m.name}`).join('\n')
-  const { value } = await ElMessageBox.prompt(`目标挂载 ID，可选:\n${options}`, action === 'copy' ? '选择复制目标' : '选择移动目标', {
-    inputValue: String(files.currentMountId),
-    inputValidator: (v) => mounts.accessibleMounts.some((m) => m.id === Number(v)) || '请输入可访问的挂载 ID',
+async function chooseTargetLocation(options = {}) {
+  if (!writableMounts.value.length) {
+    ElMessage.warning('没有可写入的目标挂载点')
+    return Promise.reject(new Error('cancelled'))
+  }
+  showTargetPathPicker.value = false
+  targetPathPickerResolver = null
+  targetPathPickerRejecter = null
+  targetPathPickerOptions.value = {
+    title: options.title || '选择目标目录',
+    confirmText: options.confirmText || '确认选择',
+    mounts: writableMounts.value,
+    mountId: options.mountId || writableMounts.value[0].id,
+    path: normalizeMountPath(options.path || '/'),
+    allowMountSelect: true,
+  }
+  targetPathPickerConfirmed.value = false
+  const result = new Promise((resolve, reject) => {
+    targetPathPickerResolver = resolve
+    targetPathPickerRejecter = reject
   })
-  return Number(value)
+  await nextTick()
+  showTargetPathPicker.value = true
+  return result
+}
+
+function handleTargetPathConfirm(target) {
+  targetPathPickerConfirmed.value = true
+  targetPathPickerResolver?.({
+    mountId: target.mountId,
+    path: normalizeMountPath(target.path),
+  })
+  targetPathPickerResolver = null
+  targetPathPickerRejecter = null
 }
 
 async function runCrossMountTransfers(action, targetMountId, targetDir = files.currentPath) {
@@ -989,11 +1106,19 @@ async function runCrossMountTransfers(action, targetMountId, targetDir = files.c
 }
 
 async function handleBatchCopy() {
-  await runBatchTransfer('copy')
+  try {
+    await runBatchTransfer('copy')
+  } catch (error) {
+    if (error?.message !== 'cancelled') throw error
+  }
 }
 
 async function handleBatchMove() {
-  await runBatchTransfer('move')
+  try {
+    await runBatchTransfer('move')
+  } catch (error) {
+    if (error?.message !== 'cancelled') throw error
+  }
 }
 
 async function handleBatchRename() {
@@ -1124,13 +1249,7 @@ async function handleBatchDelete() {
 
 // 移动文件
 async function handleMove(file) {
-  const { value } = await ElMessageBox.prompt('请输入目标路径', '移动', {
-    inputValue: file.path,
-    inputValidator: (v) => !!v.trim() || '路径不能为空',
-  })
-  await moveFile(files.currentMountId, file.path, value.trim())
-  ElMessage.success('已移动')
-  files.refresh()
+  openSingleMoveDialog(file)
 }
 
 // 双击: 进入目录 (搜索模式下导航到对应挂载)
@@ -1416,6 +1535,96 @@ async function handleDirectoryStats(file) {
   }
 }
 
+function normalizeMountPath(path) {
+  const value = String(path || '/').replace(/\\/g, '/').replace(/\/+/g, '/').trim()
+  if (!value || value === '.') return '/'
+  return value.startsWith('/') ? value.replace(/\/+$/, '') || '/' : `/${value.replace(/\/+$/, '')}`
+}
+
+function buildPathFromDirectory(dirPath, fileName) {
+  const base = normalizeMountPath(dirPath)
+  const name = String(fileName || '').trim()
+  if (!name) return base
+  if (base === '/') return `/${name}`
+  return `${base}/${name}`
+}
+
+function openSingleMoveDialog(file) {
+  showSingleMovePicker.value = false
+  const sourceMountId = selectedMountId(file)
+  const fallbackTargetMount = writableMounts.value.find((mount) => mount.id === sourceMountId) || writableMounts.value[0]
+  singleMoveFile.value = file
+  singleMoveTargetMountId.value = fallbackTargetMount?.id || sourceMountId || null
+  singleMoveTargetPath.value = file.path
+  showSingleMoveDialog.value = true
+}
+
+async function openSingleMovePicker() {
+  if (!singleMoveFile.value) {
+    ElMessage.warning('请先选择要移动的文件')
+    return
+  }
+  if (!writableMounts.value.length) {
+    ElMessage.warning('没有可写入的目标挂载点')
+    return
+  }
+  if (!singleMoveTargetMountId.value) {
+    ElMessage.warning('请先选择目标挂载点')
+    return
+  }
+  showSingleMovePicker.value = false
+  await nextTick()
+  showSingleMovePicker.value = true
+}
+
+function handleSingleMoveDirectory(target) {
+  singleMoveTargetMountId.value = target.mountId
+  singleMoveTargetPath.value = buildPathFromDirectory(target.path, singleMoveFile.value?.name)
+}
+
+async function submitSingleMove() {
+  if (!singleMoveFile.value) return
+  const targetPath = normalizeMountPath(singleMoveTargetPath.value)
+  if (!targetPath || targetPath === '/') {
+    ElMessage.warning('请输入有效的目标路径')
+    return
+  }
+  const sourceMountId = selectedMountId(singleMoveFile.value)
+  const targetMountId = singleMoveTargetMountId.value || sourceMountId
+  if (!targetMountId) {
+    ElMessage.warning('请先选择目标挂载点')
+    return
+  }
+  singleMoveSubmitting.value = true
+  try {
+    if (targetMountId === sourceMountId) {
+      await moveFile(sourceMountId, singleMoveFile.value.path, targetPath)
+      ElMessage.success('已移动')
+    } else {
+      await createTransfer({
+        type: 'move',
+        source_mount_id: sourceMountId,
+        target_mount_id: targetMountId,
+        source_path: singleMoveFile.value.path,
+        target_path: targetPath,
+        file_name: singleMoveFile.value.name,
+        file_size: singleMoveFile.value.size,
+        conflict_policy: 'rename',
+      })
+      ElMessage.success('已创建跨挂载移动任务')
+    }
+    showSingleMoveDialog.value = false
+    singleMoveFile.value = null
+    if (search.searched) {
+      search.search()
+    } else {
+      files.refresh()
+    }
+  } finally {
+    singleMoveSubmitting.value = false
+  }
+}
+
 // ── 搜索 ──────────────────────────────────────────────
 function doSearch() {
   if (!search.query.trim()) return
@@ -1448,6 +1657,21 @@ watch(() => displayFiles.value.map(fileKey).join('|'), () => {
   } else {
     syncTableSelection()
   }
+})
+
+watch(showTargetPathPicker, (open) => {
+  if (open || !targetPathPickerRejecter || targetPathPickerConfirmed.value) return
+  targetPathPickerRejecter(new Error('cancelled'))
+  targetPathPickerResolver = null
+  targetPathPickerRejecter = null
+})
+
+watch(showSingleMoveDialog, (open) => {
+  if (open) return
+  showSingleMovePicker.value = false
+  singleMoveFile.value = null
+  singleMoveTargetMountId.value = null
+  singleMoveTargetPath.value = '/'
 })
 
 // 初始化: 默认加载第一个挂载点 (非搜索模式)
@@ -1781,6 +2005,29 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+.move-source {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.move-source strong,
+.move-source span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.move-source span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.move-mount-select {
+  width: 100%;
+}
+.move-hint {
+  width: 100%;
+  margin: 6px 0 0;
 }
 :deep(.danger-action) {
   color: var(--el-color-danger);
