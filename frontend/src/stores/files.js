@@ -150,7 +150,7 @@ function compareField(a, b, field, fallback) {
 
 function getTextValue(row, field, fallback) {
   if (field === 'mount_name') return row.mount_name || fallback.mount_name || ''
-  if (field === 'creator') return row.mount_owner || row.creator || fallback.creator || ''
+  if (field === 'creator') return row.creator_name || row.creator || fallback.creator || ''
   return row[field] || ''
 }
 

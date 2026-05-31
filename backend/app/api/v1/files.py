@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session_factory, get_db
@@ -23,6 +23,7 @@ from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.policy import enforce_file_policy
 from app.core.mount_permissions import require_file_action
 from app.core.security import decode_token
+from app.models.operation_log import OperationLog
 from app.models.user import User
 from app.schemas.file import (
     BatchFileRequest,
@@ -40,6 +41,72 @@ from app.utils.path_utils import normalize_path, safe_upload_filename
 
 router = APIRouter()
 download_security_scheme = HTTPBearer()
+CREATOR_SOURCE_ACTIONS = {
+    "file_upload",
+    "file_multipart_upload",
+    "file_mkdir",
+    "file_copy",
+    "webdav.upload",
+    "webdav.mkdir",
+    "webdav.copy",
+}
+
+
+def _file_info_out(info, creator: dict | None = None) -> FileInfoOut:
+    creator = creator or {}
+    return FileInfoOut(
+        name=info.name,
+        path=info.path,
+        is_dir=info.is_dir,
+        size=info.size,
+        modified_at=info.modified_at,
+        created_at=info.created_at,
+        mime_type=info.mime_type,
+        permissions=info.permissions,
+        creator_id=creator.get("creator_id"),
+        creator_name=creator.get("creator_name"),
+    )
+
+
+async def _creator_map_for_paths(
+    db: AsyncSession,
+    mount_id: int,
+    paths: list[str],
+) -> dict[str, dict]:
+    normalized_paths = {normalize_path(path) for path in paths if path}
+    if not normalized_paths:
+        return {}
+    match_paths = set(normalized_paths)
+    match_paths.update(f"//{path.lstrip('/')}" for path in normalized_paths if path != "/")
+
+    result = await db.execute(
+        select(
+            OperationLog.user_id,
+            OperationLog.username,
+            OperationLog.path,
+            OperationLog.target_path,
+            OperationLog.action,
+        )
+        .where(OperationLog.mount_id == mount_id)
+        .where(OperationLog.action.in_(CREATOR_SOURCE_ACTIONS))
+        .where(
+            or_(
+                OperationLog.path.in_(match_paths),
+                OperationLog.target_path.in_(match_paths),
+            )
+        )
+        .order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
+    )
+
+    creators: dict[str, dict] = {}
+    for user_id, username, path, target_path, action in result.all():
+        source_path = target_path if action in {"file_copy", "webdav.copy"} else path
+        if not source_path:
+            continue
+        normalized = normalize_path(source_path)
+        if normalized in normalized_paths and normalized not in creators:
+            creators[normalized] = {"creator_id": user_id, "creator_name": username}
+    return creators
 
 
 def _download_headers(filename: str, size: int | None) -> dict[str, str]:
@@ -106,19 +173,8 @@ async def list_files(
 ):
     """列出指定目录下的文件和子目录"""
     items = await file_service.list_dir(db, mount_id, path)
-    return [
-        FileInfoOut(
-            name=item.name,
-            path=item.path,
-            is_dir=item.is_dir,
-            size=item.size,
-            modified_at=item.modified_at,
-            created_at=item.created_at,
-            mime_type=item.mime_type,
-            permissions=item.permissions,
-        )
-        for item in items
-    ]
+    creators = await _creator_map_for_paths(db, mount_id, [item.path for item in items])
+    return [_file_info_out(item, creators.get(normalize_path(item.path))) for item in items]
 
 
 @router.get("/{mount_id}/info", response_model=FileInfoOut)
@@ -130,11 +186,8 @@ async def get_file_info(
 ):
     """获取单个文件/目录的元数据"""
     item = await file_service.get_info(db, mount_id, path)
-    return FileInfoOut(
-        name=item.name, path=item.path, is_dir=item.is_dir,
-        size=item.size, modified_at=item.modified_at, created_at=item.created_at,
-        mime_type=item.mime_type, permissions=item.permissions,
-    )
+    creators = await _creator_map_for_paths(db, mount_id, [item.path])
+    return _file_info_out(item, creators.get(normalize_path(item.path)))
 
 
 @router.get("/{mount_id}/thumbnail")
@@ -345,16 +398,12 @@ async def upload_file(
         action="file_upload",
         user=current_user,
         mount_id=mount_id,
-        path=target_path,
+        path=info.path,
         ip_address=ip,
         user_agent=user_agent,
         detail={"size": info.size, "name": info.name},
     )
-    return FileInfoOut(
-        name=info.name, path=info.path, is_dir=info.is_dir,
-        size=info.size, modified_at=info.modified_at, created_at=info.created_at,
-        mime_type=info.mime_type, permissions=info.permissions,
-    )
+    return _file_info_out(info, {"creator_id": current_user.id, "creator_name": current_user.username})
 
 
 @router.post("/{mount_id}/mkdir", response_model=FileInfoOut)
@@ -373,15 +422,11 @@ async def make_directory(
         action="file_mkdir",
         user=current_user,
         mount_id=mount_id,
-        path=path,
+        path=info.path,
         ip_address=ip,
         user_agent=user_agent,
     )
-    return FileInfoOut(
-        name=info.name, path=info.path, is_dir=info.is_dir,
-        size=info.size, modified_at=info.modified_at, created_at=info.created_at,
-        mime_type=info.mime_type, permissions=info.permissions,
-    )
+    return _file_info_out(info, {"creator_id": current_user.id, "creator_name": current_user.username})
 
 
 @router.post("/{mount_id}/move", response_model=FileInfoOut)
@@ -401,15 +446,12 @@ async def move_file(
         user=current_user,
         mount_id=mount_id,
         path=body.src,
-        target_path=body.dst,
+        target_path=info.path,
         ip_address=ip,
         user_agent=user_agent,
     )
-    return FileInfoOut(
-        name=info.name, path=info.path, is_dir=info.is_dir,
-        size=info.size, modified_at=info.modified_at, created_at=info.created_at,
-        mime_type=info.mime_type, permissions=info.permissions,
-    )
+    creators = await _creator_map_for_paths(db, mount_id, [info.path])
+    return _file_info_out(info, creators.get(normalize_path(info.path)))
 
 
 @router.post("/{mount_id}/copy", response_model=FileInfoOut)
@@ -429,15 +471,11 @@ async def copy_file(
         user=current_user,
         mount_id=mount_id,
         path=body.src,
-        target_path=body.dst,
+        target_path=info.path,
         ip_address=ip,
         user_agent=user_agent,
     )
-    return FileInfoOut(
-        name=info.name, path=info.path, is_dir=info.is_dir,
-        size=info.size, modified_at=info.modified_at, created_at=info.created_at,
-        mime_type=info.mime_type, permissions=info.permissions,
-    )
+    return _file_info_out(info, {"creator_id": current_user.id, "creator_name": current_user.username})
 
 
 @router.delete("/{mount_id}/delete")
@@ -584,11 +622,7 @@ async def complete_multipart_upload(
         user_agent=user_agent,
         detail={"size": info.size, "name": info.name, "upload_id": upload_id},
     )
-    return FileInfoOut(
-        name=info.name, path=info.path, is_dir=info.is_dir,
-        size=info.size, modified_at=info.modified_at, created_at=info.created_at,
-        mime_type=info.mime_type, permissions=info.permissions,
-    )
+    return _file_info_out(info, {"creator_id": current_user.id, "creator_name": current_user.username})
 
 
 @router.delete("/{mount_id}/multipart/{upload_id}")

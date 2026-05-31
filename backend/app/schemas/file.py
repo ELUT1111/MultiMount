@@ -14,6 +14,8 @@ class FileInfoOut(BaseModel):
     created_at: datetime | None
     mime_type: str | None
     permissions: str | None
+    creator_id: int | None = None
+    creator_name: str | None = None
 
     model_config = {"from_attributes": True}
 

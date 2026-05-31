@@ -256,7 +256,7 @@
                 </span>
               </button>
             </template>
-            <template #default="{ row }">{{ search.searched ? (row.mount_owner || '-') : currentMountOwner }}</template>
+            <template #default="{ row }">{{ fileCreatorName(row) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="132" fixed="right" align="center" class-name="operation-column">
             <template #default="{ row }">
@@ -360,6 +360,19 @@
         <el-form-item label="链接清单">
           <el-checkbox v-model="shareExportList">生成后导出 .txt 清单</el-checkbox>
         </el-form-item>
+        <el-form-item v-if="shareManualLinks.length" label="生成结果">
+          <div class="share-links-panel">
+            <textarea
+              ref="shareLinksTextareaRef"
+              class="share-links-textarea"
+              :value="shareLinksText"
+              readonly
+            />
+            <div class="share-links-actions">
+              <el-button size="small" :icon="CopyDocument" @click="selectShareLinks">选中链接文本</el-button>
+            </div>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showShareDialog = false">取消</el-button>
@@ -431,6 +444,7 @@ import { CopyDocument, Delete, Document, Download, Edit, Folder, FolderAdd, Fold
 import { batchDownloadZip, batchFileOperation, deleteFile, createDirectory, moveFile, downloadFile, createShareLink, getDirectoryStats } from '@/api/files'
 import { createTransfer } from '@/api/transfers'
 import { formatSize, formatTime } from '@/utils/format'
+import { buildShareUrl } from '@/utils/shareUrl'
 import { useFilesStore } from '@/stores/files'
 import { useUpload } from '@/composables/useUpload'
 import { useMountsStore } from '@/stores/mounts'
@@ -466,12 +480,15 @@ const focusedFileKey = ref('')
 const syncingTableSelection = ref(false)
 const showShareDialog = ref(false)
 const shareSubmitting = ref(false)
+const shareLinksTextareaRef = ref(null)
 const shareTargets = ref([])
 const shareOptions = ref({
   expires_hours: 0,
   max_views: 0,
   access_code: '',
 })
+const shareManualLinks = ref([])
+const shareLinksText = computed(() => shareManualLinks.value.join('\n'))
 const shareExportList = ref(true)
 const showBatchResultDialog = ref(false)
 const batchResultRows = ref([])
@@ -551,10 +568,9 @@ const currentMountName = computed(() => {
   return m?.name || '-'
 })
 
-const currentMountOwner = computed(() => currentMount.value?.owner_name || '-')
 const sortFallback = computed(() => ({
   mount_name: currentMountName.value === '-' ? '' : currentMountName.value,
-  creator: currentMountOwner.value === '-' ? '' : currentMountOwner.value,
+  creator: '',
 }))
 const sortedSearchResults = computed(() => files.sortEntries(search.filteredResults, sortFallback.value))
 const displayFiles = computed(() => (search.searched ? sortedSearchResults.value : files.pagedFiles))
@@ -622,6 +638,10 @@ function handleRowCommand(command, row) {
 function fileKey(file) {
   if (!file) return ''
   return `${file.mount_id || files.currentMountId || ''}:${file.path}`
+}
+
+function fileCreatorName(file) {
+  return file?.creator_name || file?.creator || '-'
 }
 
 function isFileSelected(file) {
@@ -1023,6 +1043,7 @@ function openShareDialog(targets) {
     return
   }
   resetShareOptions()
+  shareManualLinks.value = []
   showShareDialog.value = true
 }
 
@@ -1032,6 +1053,13 @@ function normalizedShareOptions() {
     max_views: Number(shareOptions.value.max_views) || 0,
     access_code: shareOptions.value.access_code.trim(),
   }
+}
+
+function selectShareLinks() {
+  if (!shareManualLinks.value.length) return
+  shareLinksTextareaRef.value?.focus()
+  shareLinksTextareaRef.value?.select()
+  ElMessage.info('链接已选中，请使用 Ctrl+C 复制')
 }
 
 async function submitShareDialog() {
@@ -1044,9 +1072,16 @@ async function submitShareDialog() {
     )
     const links = results
       .filter((result) => result.status === 'fulfilled')
-      .map((result) => `${location.origin}/share/${result.value.token}`)
+      .map((result) => buildShareUrl(result.value.token))
+    shareManualLinks.value = []
+    let copied = false
     if (links.length) {
-      await navigator.clipboard.writeText(links.join('\n'))
+      try {
+        await navigator.clipboard.writeText(links.join('\n'))
+        copied = true
+      } catch {
+        shareManualLinks.value = links
+      }
       if (shareExportList.value) {
         const blob = new Blob([links.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' })
         const url = URL.createObjectURL(blob)
@@ -1057,8 +1092,14 @@ async function submitShareDialog() {
         URL.revokeObjectURL(url)
       }
     }
-    finishBatchMessage('分享', links.length, results.length - links.length)
-    showShareDialog.value = false
+    if (copied) {
+      ElMessage.success(`分享完成: ${links.length} 个链接已复制`)
+    } else if (links.length) {
+      ElMessage.warning(`分享完成: ${links.length} 个链接已生成，可手动复制`)
+    } else {
+      ElMessage.warning('没有生成可用的分享链接')
+    }
+    showShareDialog.value = shareManualLinks.value.length > 0
   } finally {
     shareSubmitting.value = false
   }
@@ -1616,6 +1657,33 @@ onBeforeUnmount(() => {
   color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.share-links-panel {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+}
+.share-links-textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-color);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+}
+.share-links-textarea:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.12);
+}
+.share-links-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .dark .file-card {

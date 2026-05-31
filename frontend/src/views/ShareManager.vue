@@ -169,6 +169,7 @@ import {
   updateSharePolicy,
 } from '@/api/shares'
 import { formatTime } from '@/utils/format'
+import { buildShareUrl } from '@/utils/shareUrl'
 import { useAuthStore } from '@/stores/auth'
 import BatchToolbar from '@/components/common/BatchToolbar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -213,7 +214,7 @@ function shareStatus(share) {
 }
 
 function shareUrl(share) {
-  return `${location.origin}/share/${share.token}`
+  return buildShareUrl(share.token)
 }
 
 async function fetchShares() {
