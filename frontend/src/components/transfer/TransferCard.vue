@@ -3,7 +3,7 @@
     <span class="status-rail" />
     <div class="card-header">
       <div class="task-info">
-        <span class="type-badge">{{ task.type === 'copy' ? '复制' : '移动' }}</span>
+        <span class="type-badge">{{ typeLabel }}</span>
         <div class="title-stack">
           <span class="file-name">{{ task.file_name }}</span>
           <span class="task-subtitle">{{ task.file_size ? `${formatSize(task.file_size)} · ${statusLabel}` : statusLabel }}</span>
@@ -43,20 +43,20 @@
     </div>
 
     <div class="card-actions">
-      <el-button v-if="['queued', 'pending', 'running'].includes(task.status)" size="small" plain @click="$emit('pause', task.id)">
+      <el-button v-if="canPause" size="small" plain @click="$emit('pause', task.id)">
         <el-icon><VideoPause /></el-icon>
         暂停
       </el-button>
-      <el-button v-if="task.status === 'paused'" type="primary" size="small" @click="$emit('resume', task.id)">
+      <el-button v-if="canResume" type="primary" size="small" @click="$emit('resume', task.id)">
         <el-icon><VideoPlay /></el-icon>
         继续
       </el-button>
-      <el-button v-if="task.status === 'failed'" type="warning" size="small" @click="$emit('retry', task.id)">
+      <el-button v-if="canRetry" type="warning" size="small" @click="$emit('retry', task.id)">
         <el-icon><RefreshRight /></el-icon>
         重试
       </el-button>
       <el-button
-        v-if="task.status !== 'completed'"
+        v-if="canCancel"
         type="danger"
         size="small"
         plain
@@ -64,7 +64,7 @@
       >
         取消
       </el-button>
-      <el-button v-if="task.status === 'completed'" type="danger" size="small" plain @click="$emit('cancel', task.id)">
+      <el-button v-if="canRemove" type="danger" size="small" plain @click="$emit('cancel', task.id)">
         删除
       </el-button>
     </div>
@@ -101,6 +101,19 @@ const statusLabel = computed(() => ({
   failed: '已失败',
 }[props.task.status] || props.task.status))
 
+const typeLabel = computed(() => ({
+  copy: '复制',
+  move: '移动',
+  download: '下载',
+}[props.task.type] || props.task.type))
+
+const isDownload = computed(() => props.task.type === 'download')
+const canPause = computed(() => !isDownload.value && ['queued', 'pending', 'running'].includes(props.task.status))
+const canResume = computed(() => !isDownload.value && props.task.status === 'paused')
+const canRetry = computed(() => !isDownload.value && props.task.status === 'failed')
+const canCancel = computed(() => !['completed', 'failed'].includes(props.task.status))
+const canRemove = computed(() => ['completed', 'failed'].includes(props.task.status))
+
 const progressPercent = computed(() => {
   if (props.task.status === 'completed') return 100
   if (!props.task.file_size) return 0
@@ -111,6 +124,9 @@ const progressPercent = computed(() => {
 <style scoped>
 .transfer-card {
   position: relative;
+  flex: 0 0 auto;
+  min-height: max-content;
+  height: auto;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 10px;
@@ -118,7 +134,7 @@ const progressPercent = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
@@ -159,6 +175,10 @@ const progressPercent = computed(() => {
 .type-move .type-badge {
   color: var(--warning-color);
   background: color-mix(in srgb, var(--warning-color) 14%, transparent);
+}
+.type-download .type-badge {
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
 }
 .title-stack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .file-name {

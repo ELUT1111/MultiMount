@@ -9,7 +9,30 @@ from app.services import mount_service
 
 
 @pytest.mark.asyncio
-async def test_connection_test_requires_mount_owner(monkeypatch):
+async def test_connection_test_allows_admin(monkeypatch):
+    async def fake_get_mount(_db, _mount_id):
+        return SimpleNamespace(id=1, user_id=7)
+
+    called = False
+
+    async def fake_test_mount_connection(_db, _mount_id):
+        nonlocal called
+        called = True
+        return True
+
+    monkeypatch.setattr(mounts.mount_service, "get_mount", fake_get_mount)
+    monkeypatch.setattr(mounts.mount_service, "test_mount_connection", fake_test_mount_connection)
+
+    user = SimpleNamespace(id=42, role=SimpleNamespace(name="admin"))
+
+    response = await mounts.test_connection(1, user=user, db=None)
+
+    assert called is True
+    assert response == {"success": True, "message": "连接成功"}
+
+
+@pytest.mark.asyncio
+async def test_connection_test_requires_owner_for_non_admin(monkeypatch):
     async def fake_get_mount(_db, _mount_id):
         return SimpleNamespace(id=1, user_id=7)
 
@@ -19,7 +42,7 @@ async def test_connection_test_requires_mount_owner(monkeypatch):
     monkeypatch.setattr(mounts.mount_service, "get_mount", fake_get_mount)
     monkeypatch.setattr(mounts.mount_service, "test_mount_connection", fake_test_mount_connection)
 
-    user = SimpleNamespace(id=42, role=SimpleNamespace(name="admin"))
+    user = SimpleNamespace(id=42, role=SimpleNamespace(name="user"))
 
     with pytest.raises(HTTPException) as exc:
         await mounts.test_connection(1, user=user, db=None)
@@ -113,8 +136,8 @@ async def test_mount_connection_refreshes_capacity(monkeypatch):
         async def disconnect(self):
             return None
 
-        async def get_capacity(self):
-            return {"used": 25, "total": 100}
+        async def get_tree_stats(self, _path):
+            return {"file_count": 25, "total_size": 100}
 
     async def fake_get_mount(_db, _mount_id):
         return mount

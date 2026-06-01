@@ -120,10 +120,10 @@ const completionRate = computed(() => {
   return Math.round((completedCount.value / transfers.tasks.length) * 100)
 })
 const emptyDescription = computed(() => ({
-  running: '暂无进行中的复制/移动任务',
+  running: '暂无进行中的传输任务',
   completed: '暂无已完成任务',
   failed: '暂无失败任务',
-}[transfers.activeTab] || '暂无复制/移动任务'))
+}[transfers.activeTab] || '暂无传输任务'))
 
 watch(wsData, (val) => {
   if (val?.type === 'transfer_progress') {
@@ -132,9 +132,11 @@ watch(wsData, (val) => {
 })
 
 async function handleCancel(id) {
-  await ElMessageBox.confirm('确定取消此任务？', '确认', { type: 'warning' })
+  const task = transfers.tasks.find((item) => item.id === id)
+  const removing = task && ['completed', 'failed'].includes(task.status)
+  await ElMessageBox.confirm(removing ? '确定删除此任务记录？' : '确定取消此任务？', '确认', { type: 'warning' })
   await transfers.cancelTask(id)
-  ElMessage.success('已取消')
+  ElMessage.success(removing ? '已删除' : '已取消')
 }
 
 async function handleBatchPause() {
@@ -170,7 +172,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.transfer-tasks { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+.transfer-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  height: 100%;
+}
 .transfer-overview {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -219,7 +227,16 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.4;
 }
-.task-list { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: auto; padding-right: 2px; }
+.task-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  padding-right: 2px;
+  align-items: stretch;
+}
 .transfer-footer {
   display: flex; gap: 24px; align-items: center; padding: 12px 16px;
   background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; font-size: 13px; color: var(--text-regular);

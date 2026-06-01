@@ -172,7 +172,8 @@ async def test_connection(
     db: AsyncSession = Depends(get_db),
 ):
     mount = await mount_service.get_mount(db, mount_id)
-    if mount.user_id != user.id:
+    is_admin = user.role and user.role.name == "admin"
+    if not is_admin and mount.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能测试自己创建的挂载")
     ok = await mount_service.test_mount_connection(db, mount_id)
     return {"success": ok, "message": "连接成功" if ok else "连接失败"}

@@ -384,7 +384,7 @@ function isOwner(mount) {
 }
 
 function canTest(mount) {
-  return isOwner(mount)
+  return auth.isAdmin || isOwner(mount)
 }
 
 function canEdit(mount) {

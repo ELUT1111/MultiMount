@@ -517,6 +517,7 @@ import { useUpload } from '@/composables/useUpload'
 import { useMountsStore } from '@/stores/mounts'
 import { useSearchStore } from '@/stores/search'
 import { useAppStore } from '@/stores/app'
+import { useTransfersStore } from '@/stores/transfers'
 import DetailPanel from '@/components/layout/DetailPanel.vue'
 import FileContextMenu from '@/components/file/FileContextMenu.vue'
 import FilePreview from '@/components/file/FilePreview.vue'
@@ -532,6 +533,7 @@ const mounts = useMountsStore()
 const upload = useUpload()
 const search = useSearchStore()
 const appPrefs = useAppStore()
+const transfers = useTransfersStore()
 
 const contextMenuRef = ref()
 const fileTableRef = ref()
@@ -993,22 +995,63 @@ function resetBatchAfterChange() {
   files.refresh()
 }
 
+function createDownloadProgressHandler(taskId, fallbackSize = 0) {
+  let lastLoaded = 0
+  let lastAt = performance.now()
+  return (event) => {
+    const loaded = Number(event.loaded) || 0
+    const total = Number(event.total) || fallbackSize || 0
+    const now = performance.now()
+    const elapsed = (now - lastAt) / 1000
+    const speed = elapsed > 0 ? Math.max(0, (loaded - lastLoaded) / elapsed) : 0
+    if (now - lastAt < 250 && loaded !== total) return
+    lastLoaded = loaded
+    lastAt = now
+    transfers.updateLocalTask(taskId, {
+      status: 'running',
+      transferred: loaded,
+      file_size: total,
+      speed,
+    })
+  }
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 async function handleBatchDownload() {
   if (!selectedFiles.value.length) return
+  const fallbackSize = selectedFiles.value.reduce((sum, file) => sum + (file.is_dir ? 0 : Number(file.size) || 0), 0)
+  const controller = new AbortController()
+  const task = transfers.createDownloadTask({
+    fileName: 'mounthub-download.zip',
+    fileSize: fallbackSize,
+    sourcePath: `${selectedFiles.value.length} 个项目`,
+    targetPath: '浏览器下载',
+    cancel: () => controller.abort(),
+  })
   try {
     const blob = await batchDownloadZip(selectedFiles.value.map((file) => ({
       mount_id: selectedMountId(file),
       path: file.path,
-    })))
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'mounthub-download.zip'
-    a.click()
-    URL.revokeObjectURL(url)
+    })), {
+      signal: controller.signal,
+      suppressErrorMessage: true,
+      onDownloadProgress: createDownloadProgressHandler(task.id, fallbackSize),
+    })
+    saveBlob(blob, 'mounthub-download.zip')
+    transfers.completeLocalTask(task.id, { file_size: blob.size || fallbackSize })
     ElMessage.success('批量下载已开始')
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '批量下载失败')
+    const cancelled = e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError'
+    transfers.failLocalTask(task.id, cancelled ? '已取消' : (e.response?.data?.detail || '批量下载失败'))
+    if (!cancelled) ElMessage.error(e.response?.data?.detail || '批量下载失败')
   }
 }
 
@@ -1290,17 +1333,28 @@ function handlePreview(file) {
 // 下载
 async function handleDownload(file) {
   if (!file || file.is_dir) return
+  const controller = new AbortController()
+  const task = transfers.createDownloadTask({
+    mountId: selectedMountId(file),
+    fileName: file.name,
+    fileSize: file.size || 0,
+    sourcePath: file.path,
+    targetPath: '浏览器下载',
+    cancel: () => controller.abort(),
+  })
   try {
-    const blob = await downloadFile(selectedMountId(file), file.path)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = file.name
-    a.click()
-    URL.revokeObjectURL(url)
+    const blob = await downloadFile(selectedMountId(file), file.path, {
+      signal: controller.signal,
+      suppressErrorMessage: true,
+      onDownloadProgress: createDownloadProgressHandler(task.id, file.size || 0),
+    })
+    saveBlob(blob, file.name)
+    transfers.completeLocalTask(task.id, { file_size: blob.size || file.size || 0 })
     ElMessage.success(`下载: ${file.name}`)
-  } catch {
-    ElMessage.error('下载失败')
+  } catch (e) {
+    const cancelled = e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError'
+    transfers.failLocalTask(task.id, cancelled ? '已取消' : (e.response?.data?.detail || '下载失败'))
+    if (!cancelled) ElMessage.error('下载失败')
   }
 }
 

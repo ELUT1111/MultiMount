@@ -20,9 +20,27 @@ class FakeResult:
 class FakeDB:
     def __init__(self, results):
         self.results = list(results)
+        self.execute_count = 0
 
     async def execute(self, _stmt):
+        self.execute_count += 1
         return self.results.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_admin_has_readwrite_access_to_any_mount_without_lookup():
+    db = FakeDB([])
+    user = SimpleNamespace(id=42, role=SimpleNamespace(name="admin"))
+
+    level = await mount_permission_service.check_mount_access(
+        db,
+        mount_id=999,
+        user=user,
+        required_level="readwrite",
+    )
+
+    assert level == "readwrite"
+    assert db.execute_count == 0
 
 
 @pytest.mark.asyncio

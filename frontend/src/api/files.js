@@ -12,12 +12,12 @@ export const getFileInfo = (mountId, path) =>
   request.get(`/files/${mountId}/info`, { params: { path } })
 
 /** 下载文件 (返回 blob) */
-export const downloadFile = (mountId, path) =>
-  request.get(`/files/${mountId}/download`, { params: { path }, responseType: 'blob' })
+export const downloadFile = (mountId, path, options = {}) =>
+  request.get(`/files/${mountId}/download`, { params: { path }, responseType: 'blob', ...options })
 
 /** 批量 ZIP 下载 */
-export const batchDownloadZip = (items) =>
-  request.post('/files/batch-download', { items }, { responseType: 'blob' })
+export const batchDownloadZip = (items, options = {}) =>
+  request.post('/files/batch-download', { items }, { responseType: 'blob', ...options })
 
 /** 目录递归统计 */
 export const getDirectoryStats = (mountId, path) =>
