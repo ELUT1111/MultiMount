@@ -14,8 +14,8 @@
           <el-option label="已停用" value="inactive" />
           <el-option label="已过期" value="expired" />
         </el-select>
-        <el-input v-model="creatorFilter" placeholder="创建者 ID" clearable />
-        <el-input v-model.number="mountFilter" placeholder="挂载 ID" clearable />
+        <el-input v-model="creatorFilter" placeholder="创建者" clearable />
+        <el-input v-model="mountFilter" placeholder="挂载点" clearable />
         <el-button v-if="auth.isAdmin" @click="openPolicy">安全策略</el-button>
         <el-button :icon="Refresh" @click="fetchShares" :loading="loading">刷新</el-button>
       </template>
@@ -59,10 +59,10 @@
           </template>
         </el-table-column>
         <el-table-column label="创建者" width="96" class-name="hide-sm" label-class-name="hide-sm">
-          <template #default="{ row }">#{{ row.created_by }}</template>
+          <template #default="{ row }">{{ creatorLabel(row) }}</template>
         </el-table-column>
-        <el-table-column label="挂载" width="88" class-name="hide-sm" label-class-name="hide-sm">
-          <template #default="{ row }">#{{ row.mount_id }}</template>
+        <el-table-column label="挂载点" width="140" class-name="hide-sm" label-class-name="hide-sm" show-overflow-tooltip>
+          <template #default="{ row }">{{ mountLabel(row) }}</template>
         </el-table-column>
         <el-table-column label="过期时间" width="180" class-name="hide-sm" label-class-name="hide-sm">
           <template #default="{ row }">{{ row.expires_at ? formatTime(row.expires_at) : '永不过期' }}</template>
@@ -191,8 +191,8 @@ const policy = ref({ enabled: true, force_access_code: false, default_expires_ho
 
 const filteredShares = computed(() => shares.value.filter((share) => {
   if (statusFilter.value && shareStatus(share).value !== statusFilter.value) return false
-  if (creatorFilter.value && String(share.created_by) !== String(creatorFilter.value)) return false
-  if (mountFilter.value && Number(share.mount_id) !== Number(mountFilter.value)) return false
+  if (creatorFilter.value && !creatorLabel(share).toLowerCase().includes(String(creatorFilter.value).toLowerCase())) return false
+  if (mountFilter.value && !mountLabel(share).toLowerCase().includes(String(mountFilter.value).toLowerCase())) return false
   return true
 }))
 
@@ -201,6 +201,14 @@ const expiredShareCount = computed(() => shares.value.filter((share) => shareSta
 
 function fileName(path) {
   return path?.split('/').filter(Boolean).pop() || path || '-'
+}
+
+function creatorLabel(share) {
+  return share.creator_name || `用户 #${share.created_by}`
+}
+
+function mountLabel(share) {
+  return share.mount_name || `挂载点 #${share.mount_id}`
 }
 
 function isExpired(share) {
@@ -220,6 +228,7 @@ function shareUrl(share) {
 async function fetchShares() {
   loading.value = true
   try {
+    try { await auth.refreshUser() } catch {}
     shares.value = auth.isAdmin ? await listAllShares() : await listMyShares()
   } finally {
     loading.value = false

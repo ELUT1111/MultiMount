@@ -13,14 +13,17 @@ from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import aiofiles
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.base import FileInfo
 from app.config import get_settings
 from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.roles import ADMIN_ROLE_NAMES, is_admin, is_super_admin
+from app.models.role import Role
 from app.models.operation_log import OperationLog
 from app.models.share_link import ShareLink
+from app.models.user import User
 from app.utils.path_utils import normalize_path
 
 settings = get_settings()
@@ -581,6 +584,7 @@ async def update_share_link(
     link_id: int,
     user_id: int,
     is_admin: bool = False,
+    actor=None,
     *,
     expires_hours: int | None = None,
     max_views: int | None = None,
@@ -592,6 +596,8 @@ async def update_share_link(
     if link is None:
         raise NotFoundException("分享链接不存在")
     if not is_admin and link.created_by != user_id:
+        raise BadRequestException("无权修改此分享链接")
+    if is_admin and link.created_by != user_id and actor is not None and not await can_admin_manage_link(db, link, actor):
         raise BadRequestException("无权修改此分享链接")
 
     policy = get_share_policy()
@@ -683,12 +689,14 @@ async def validate_and_access(
     return link
 
 
-async def share_stats(db: AsyncSession, link_id: int, user_id: int, is_admin: bool = False) -> dict:
+async def share_stats(db: AsyncSession, link_id: int, user_id: int, is_admin: bool = False, actor=None) -> dict:
     result = await db.execute(select(ShareLink).where(ShareLink.id == link_id))
     link = result.scalar_one_or_none()
     if link is None:
         raise NotFoundException("分享链接不存在")
     if not is_admin and link.created_by != user_id:
+        raise BadRequestException("无权查看此分享链接")
+    if is_admin and link.created_by != user_id and actor is not None and not await can_admin_manage_link(db, link, actor):
         raise BadRequestException("无权查看此分享链接")
 
     logs = [
@@ -720,6 +728,25 @@ async def share_stats(db: AsyncSession, link_id: int, user_id: int, is_admin: bo
     }
 
 
+async def can_admin_manage_link(db: AsyncSession, link: ShareLink, user) -> bool:
+    """Return whether an admin may manage a link outside their own ownership."""
+    if link.created_by == user.id:
+        return True
+    if is_super_admin(user):
+        return True
+    if not is_admin(user):
+        return False
+
+    result = await db.execute(
+        select(Role.name)
+        .select_from(User)
+        .outerjoin(Role, User.role_id == Role.id)
+        .where(User.id == link.created_by)
+    )
+    creator_role = result.scalar_one_or_none()
+    return creator_role not in ADMIN_ROLE_NAMES
+
+
 async def list_user_links(db: AsyncSession, user_id: int) -> list[ShareLink]:
     """列出用户创建的所有分享链接"""
     result = await db.execute(
@@ -736,7 +763,31 @@ async def list_all_links(db: AsyncSession) -> list[ShareLink]:
     return list(result.scalars().all())
 
 
-async def delete_share_link(db: AsyncSession, link_id: int, user_id: int, is_admin: bool = False) -> None:
+async def list_visible_links(db: AsyncSession, user) -> list[ShareLink]:
+    """按当前用户身份列出可在分享管理面板中看到的分享链接。"""
+    if is_super_admin(user):
+        return await list_all_links(db)
+
+    if is_admin(user):
+        result = await db.execute(
+            select(ShareLink)
+            .outerjoin(User, ShareLink.created_by == User.id)
+            .outerjoin(Role, User.role_id == Role.id)
+            .where(
+                or_(
+                    ShareLink.created_by == user.id,
+                    Role.name.is_(None),
+                    ~Role.name.in_(ADMIN_ROLE_NAMES),
+                )
+            )
+            .order_by(ShareLink.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    return await list_user_links(db, user.id)
+
+
+async def delete_share_link(db: AsyncSession, link_id: int, user_id: int, is_admin: bool = False, actor=None) -> None:
     """删除分享链接 (仅创建者或管理员可操作)"""
     result = await db.execute(select(ShareLink).where(ShareLink.id == link_id))
     link = result.scalar_one_or_none()
@@ -744,18 +795,22 @@ async def delete_share_link(db: AsyncSession, link_id: int, user_id: int, is_adm
         raise NotFoundException("分享链接不存在")
     if not is_admin and link.created_by != user_id:
         raise BadRequestException("无权删除此分享链接")
+    if is_admin and link.created_by != user_id and actor is not None and not await can_admin_manage_link(db, link, actor):
+        raise BadRequestException("无权删除此分享链接")
     await release_snapshot(db, link)
     await db.delete(link)
     await db.flush()
 
 
-async def deactivate_link(db: AsyncSession, link_id: int, user_id: int | None = None, is_admin: bool = False) -> None:
+async def deactivate_link(db: AsyncSession, link_id: int, user_id: int | None = None, is_admin: bool = False, actor=None) -> None:
     """停用分享链接。管理员可停用任意链接，普通用户仅可停用自己创建的链接。"""
     result = await db.execute(select(ShareLink).where(ShareLink.id == link_id))
     link = result.scalar_one_or_none()
     if link is None:
         raise NotFoundException("分享链接不存在")
     if user_id is not None and not is_admin and link.created_by != user_id:
+        raise BadRequestException("无权停用此分享链接")
+    if user_id is not None and is_admin and link.created_by != user_id and actor is not None and not await can_admin_manage_link(db, link, actor):
         raise BadRequestException("无权停用此分享链接")
     await deactivate_with_snapshot_cleanup(db, link)
     await db.flush()
@@ -767,15 +822,16 @@ async def batch_update_links(
     user_id: int,
     is_admin: bool,
     action: str,
+    actor=None,
 ) -> dict:
     success_count = 0
     failed = []
     for link_id in link_ids:
         try:
             if action == "delete":
-                await delete_share_link(db, link_id, user_id, is_admin)
+                await delete_share_link(db, link_id, user_id, is_admin, actor=actor)
             elif action == "deactivate":
-                await deactivate_link(db, link_id, user_id, is_admin)
+                await deactivate_link(db, link_id, user_id, is_admin, actor=actor)
             else:
                 raise BadRequestException("不支持的批量操作")
             success_count += 1

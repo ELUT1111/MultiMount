@@ -12,12 +12,15 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_serializer
 from starlette.background import BackgroundTask
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
 from app.core.policy import enforce_file_policy
 from app.core.roles import is_admin as has_admin_role
+from app.models.mount import Mount
+from app.models.user import User
 from app.services import file_service, operation_log_service, share_service
 
 router = APIRouter()
@@ -65,6 +68,8 @@ class ShareLinkOut(BaseModel):
     access_code: str | None
     created_at: datetime
     is_dir: bool | None = None
+    creator_name: str | None = None
+    mount_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -75,6 +80,34 @@ class ShareLinkOut(BaseModel):
 
 class ShareAccessRequest(BaseModel):
     access_code: str = ""
+
+
+async def _enrich_share_links(db: AsyncSession, links):
+    items = list(links)
+    if not items:
+        return items
+
+    user_ids = {link.created_by for link in items if link.created_by is not None}
+    mount_ids = {link.mount_id for link in items if link.mount_id is not None}
+
+    user_map = {}
+    if user_ids:
+        result = await db.execute(select(User.id, User.username).where(User.id.in_(user_ids)))
+        user_map = {user_id: username for user_id, username in result.all()}
+
+    mount_map = {}
+    if mount_ids:
+        result = await db.execute(select(Mount.id, Mount.name).where(Mount.id.in_(mount_ids)))
+        mount_map = {mount_id: name for mount_id, name in result.all()}
+
+    for link in items:
+        link.creator_name = user_map.get(link.created_by)
+        link.mount_name = mount_map.get(link.mount_id)
+    return items
+
+
+async def _enrich_share_link(db: AsyncSession, link):
+    return (await _enrich_share_links(db, [link]))[0]
 
 
 # ── 创建分享链接 ──────────────────────────────────────────
@@ -110,7 +143,7 @@ async def create_link(
         user_agent=user_agent,
         detail={"share_id": link.id, "expires_at": link.expires_at.isoformat() if link.expires_at else None},
     )
-    return link
+    return await _enrich_share_link(db, link)
 
 
 # ── 查询当前用户的分享链接 ────────────────────────────────
@@ -121,18 +154,18 @@ async def list_my_links(
     db: AsyncSession = Depends(get_db),
 ):
     """获取当前用户创建的分享链接列表"""
-    return await share_service.list_user_links(db, current_user.id)
+    return await _enrich_share_links(db, await share_service.list_user_links(db, current_user.id))
 
 
 # ── 管理员: 查询所有分享链接 ──────────────────────────────
 
 @router.get("/all", response_model=list[ShareLinkOut])
 async def list_all_links(
-    _admin=Depends(require_admin),
+    admin=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """管理员: 获取所有分享链接"""
-    return await share_service.list_all_links(db)
+    """管理员: 按身份获取可见分享链接"""
+    return await _enrich_share_links(db, await share_service.list_visible_links(db, admin))
 
 
 @router.get("/policy")
@@ -153,7 +186,7 @@ async def batch_share_links(
     db: AsyncSession = Depends(get_db),
 ):
     is_admin = has_admin_role(current_user)
-    result = await share_service.batch_update_links(db, body.ids, current_user.id, is_admin, body.action)
+    result = await share_service.batch_update_links(db, body.ids, current_user.id, is_admin, body.action, actor=current_user)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
         db,
@@ -376,7 +409,7 @@ async def get_share_stats(
     db: AsyncSession = Depends(get_db),
 ):
     is_admin = has_admin_role(current_user)
-    return await share_service.share_stats(db, link_id, current_user.id, is_admin)
+    return await share_service.share_stats(db, link_id, current_user.id, is_admin, actor=current_user)
 
 
 @router.put("/{link_id}", response_model=ShareLinkOut)
@@ -393,6 +426,7 @@ async def update_link(
         link_id,
         current_user.id,
         is_admin,
+        actor=current_user,
         **body.model_dump(exclude_unset=True),
     )
     ip, user_agent = operation_log_service.request_context(request)
@@ -407,7 +441,7 @@ async def update_link(
         user_agent=user_agent,
         detail={"share_id": link.id},
     )
-    return link
+    return await _enrich_share_link(db, link)
 
 
 # ── 删除/停用分享链接 ─────────────────────────────────────
@@ -421,7 +455,7 @@ async def delete_link(
 ):
     """删除分享链接"""
     is_admin = has_admin_role(current_user)
-    await share_service.delete_share_link(db, link_id, current_user.id, is_admin)
+    await share_service.delete_share_link(db, link_id, current_user.id, is_admin, actor=current_user)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
         db,
@@ -443,7 +477,7 @@ async def deactivate_link(
 ):
     """停用分享链接。创建者或管理员可操作。"""
     is_admin = has_admin_role(current_user)
-    await share_service.deactivate_link(db, link_id, current_user.id, is_admin)
+    await share_service.deactivate_link(db, link_id, current_user.id, is_admin, actor=current_user)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
         db,
