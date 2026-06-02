@@ -9,6 +9,8 @@ function safeParseUser() {
   }
 }
 
+const ADMIN_ROLE_NAMES = ['admin', 'super_admin']
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     accessToken: localStorage.getItem('access_token') || '',
@@ -19,10 +21,20 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     isAuthenticated: (state) => !!state.accessToken,
     username: (state) => state.user?.username || '',
-    isAdmin: (state) => state.user?.role?.name === 'admin',
+    isAdmin: (state) => ADMIN_ROLE_NAMES.includes(state.user?.role?.name),
+    isSuperAdmin: (state) => state.user?.role?.name === 'super_admin',
   },
 
   actions: {
+    async refreshUser() {
+      if (!this.accessToken) return null
+      const { getMe } = await import('@/api/users')
+      const user = await getMe()
+      this.user = user
+      localStorage.setItem('user', JSON.stringify(user))
+      return user
+    },
+
     async login(loginId, password) {
       const data = await loginApi({ login_id: loginId, password })
       this.accessToken = data.access_token
@@ -31,10 +43,7 @@ export const useAuthStore = defineStore('auth', {
       localStorage.setItem('refresh_token', data.refresh_token)
       // 获取用户信息
       try {
-        const { getMe } = await import('@/api/users')
-        const user = await getMe()
-        this.user = user
-        localStorage.setItem('user', JSON.stringify(user))
+        await this.refreshUser()
       } catch {
         this.user = { username: loginId }
         localStorage.setItem('user', JSON.stringify({ username: loginId }))

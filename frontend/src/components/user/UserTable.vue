@@ -7,7 +7,7 @@
       <div class="toolbar-filters responsive-filters">
         <el-input v-model="search" placeholder="搜索用户名/邮箱..." :prefix-icon="Search" clearable />
         <el-select v-model="filterRole" placeholder="角色" clearable>
-          <el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.name" />
+          <el-option v-for="r in roles" :key="r.id" :label="roleLabel(r.name)" :value="r.name" />
         </el-select>
         <el-select v-model="filterStatus" placeholder="状态" clearable>
           <el-option label="启用" :value="true" />
@@ -31,7 +31,9 @@
         </el-table-column>
         <el-table-column label="角色" width="130">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.role?.name || '未分配' }}</el-tag>
+            <el-tag size="small" effect="plain" :type="roleTagType(row.role?.name)">
+              {{ roleLabel(row.role?.name) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
@@ -46,16 +48,29 @@
           <template #default="{ row }">
             <div class="row-actions">
               <el-tooltip content="编辑" placement="top" :show-after="250">
-                <el-button class="action-button" text :icon="Edit" aria-label="编辑" @click="$emit('edit', row)" />
+                <el-button
+                  class="action-button"
+                  text
+                  :icon="Edit"
+                  aria-label="编辑"
+                  :disabled="!canEdit(row)"
+                  @click="$emit('edit', row)"
+                />
               </el-tooltip>
               <el-dropdown trigger="click" placement="bottom-end" @command="(command) => handleCommand(command, row)">
-                <el-button class="action-button" text :icon="MoreFilled" aria-label="更多操作" />
+                <el-button
+                  class="action-button"
+                  text
+                  :icon="MoreFilled"
+                  aria-label="更多操作"
+                  :disabled="!canToggle(row) && !canDelete(row)"
+                />
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="toggle" :icon="SwitchButton">
+                    <el-dropdown-item command="toggle" :icon="SwitchButton" :disabled="!canToggle(row)">
                       {{ row.is_active ? '禁用' : '启用' }}
                     </el-dropdown-item>
-                    <el-dropdown-item class="danger-action" command="delete" :icon="Delete" divided>删除</el-dropdown-item>
+                    <el-dropdown-item class="danger-action" command="delete" :icon="Delete" :disabled="!canDelete(row)" divided>删除</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -77,6 +92,7 @@ const props = defineProps({
   users: { type: Array, default: () => [] },
   roles: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
+  isSuperAdmin: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['add', 'edit', 'toggle', 'delete'])
@@ -95,12 +111,49 @@ const filtered = computed(() =>
 )
 
 function handleCommand(command, row) {
+  if (command === 'toggle' && !canToggle(row)) return
+  if (command === 'delete' && !canDelete(row)) return
   if (command === 'toggle') emit('toggle', row)
   else if (command === 'delete') emit('delete', row)
 }
 
 function userInitial(username) {
   return String(username || 'U').slice(0, 1).toUpperCase()
+}
+
+function roleLabel(name) {
+  const labels = {
+    super_admin: '超级管理员',
+    admin: '管理员',
+    user: '普通用户',
+    readonly: '只读用户',
+  }
+  return labels[name] || name || '未分配'
+}
+
+function roleTagType(name) {
+  if (name === 'super_admin') return 'danger'
+  if (name === 'admin') return 'warning'
+  if (name === 'readonly') return 'info'
+  return 'primary'
+}
+
+function canEdit(user) {
+  if (user.role?.name === 'super_admin') return props.isSuperAdmin
+  if (user.role?.name === 'admin') return props.isSuperAdmin
+  return true
+}
+
+function canToggle(user) {
+  if (user.role?.name === 'super_admin') return false
+  if (user.role?.name === 'admin') return props.isSuperAdmin
+  return true
+}
+
+function canDelete(user) {
+  if (user.role?.name === 'super_admin') return false
+  if (user.role?.name === 'admin') return props.isSuperAdmin
+  return true
 }
 </script>
 

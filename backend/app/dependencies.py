@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import decode_token
+from app.core.roles import is_admin, is_super_admin
 from app.database import get_db
 
 security_scheme = HTTPBearer()
@@ -37,6 +38,13 @@ async def get_current_user(
 
 async def require_admin(user=Depends(get_current_user)):
     """要求管理员角色"""
-    if not user.role or user.role.name != "admin":
+    if not is_admin(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    return user
+
+
+async def require_super_admin(user=Depends(get_current_user)):
+    """要求超级管理员角色"""
+    if not is_super_admin(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要超级管理员权限")
     return user

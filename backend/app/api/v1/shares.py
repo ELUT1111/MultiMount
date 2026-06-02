@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
 from app.core.policy import enforce_file_policy
+from app.core.roles import is_admin as has_admin_role
 from app.services import file_service, operation_log_service, share_service
 
 router = APIRouter()
@@ -151,7 +152,7 @@ async def batch_share_links(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    is_admin = current_user.role and current_user.role.name == "admin"
+    is_admin = has_admin_role(current_user)
     result = await share_service.batch_update_links(db, body.ids, current_user.id, is_admin, body.action)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
@@ -374,7 +375,7 @@ async def get_share_stats(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    is_admin = current_user.role and current_user.role.name == "admin"
+    is_admin = has_admin_role(current_user)
     return await share_service.share_stats(db, link_id, current_user.id, is_admin)
 
 
@@ -386,7 +387,7 @@ async def update_link(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    is_admin = current_user.role and current_user.role.name == "admin"
+    is_admin = has_admin_role(current_user)
     link = await share_service.update_share_link(
         db,
         link_id,
@@ -419,7 +420,7 @@ async def delete_link(
     db: AsyncSession = Depends(get_db),
 ):
     """删除分享链接"""
-    is_admin = current_user.role and current_user.role.name == "admin"
+    is_admin = has_admin_role(current_user)
     await share_service.delete_share_link(db, link_id, current_user.id, is_admin)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(
@@ -441,7 +442,7 @@ async def deactivate_link(
     db: AsyncSession = Depends(get_db),
 ):
     """停用分享链接。创建者或管理员可操作。"""
-    is_admin = current_user.role and current_user.role.name == "admin"
+    is_admin = has_admin_role(current_user)
     await share_service.deactivate_link(db, link_id, current_user.id, is_admin)
     ip, user_agent = operation_log_service.request_context(request)
     await operation_log_service.log_operation(

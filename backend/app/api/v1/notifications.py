@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.core.roles import is_admin as has_admin_role
 from app.models.notification import Notification
 from app.services import notification_service
 
@@ -193,7 +194,7 @@ async def handle_notification_action(
         raise HTTPException(status_code=400, detail="该通知已处理")
 
     # 校验当前用户是挂载所有者或管理员
-    is_admin = user.role and user.role.name == "admin"
+    is_admin = has_admin_role(user)
     mount = await get_mount(db, mount_id)
     if not is_admin and mount.user_id != user.id:
         raise HTTPException(status_code=403, detail="仅挂载所有者可审批")

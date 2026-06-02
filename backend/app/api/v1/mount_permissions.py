@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.core.roles import is_admin as has_admin_role
 from app.models.notification import Notification
 from app.models.user import User
 from app.services import mount_permission_service, operation_log_service
@@ -27,7 +28,7 @@ class RequestAccessRequest(BaseModel):
 
 async def _require_mount_owner_or_admin(mount_id: int, user: User, db: AsyncSession):
     """校验用户是挂载所有者或管理员"""
-    is_admin = user.role and user.role.name == "admin"
+    is_admin = has_admin_role(user)
     if is_admin:
         return
     mount = await get_mount(db, mount_id)

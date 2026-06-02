@@ -66,7 +66,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8014 --reload
 后端启动后会自动:
 - 创建 SQLite 数据库 (`data/multimount.db`)
 - 初始化默认角色 (admin / user / readonly)
-- 创建默认管理员账号
+- 创建默认超级管理员账号
 
 前端:
 
@@ -78,7 +78,7 @@ npm run dev
 
 访问 http://localhost:5173 ，前端通过 `VITE_API_BASE_URL` 连接后端 `http://localhost:8014`。也可以使用 Vite 代理将 `/api` 请求转发到后端 `http://127.0.0.1:8014`。
 
-### 默认管理员账号
+### 默认超级管理员账号
 
 | 账号 | 用户名 | 密码 |
 |------|--------|------|
@@ -311,7 +311,7 @@ sudo systemctl status mounthub
 - 传输队列管理
 - 传输进度和状态跟踪
 
-### 系统管理 (管理员)
+### 系统管理 (超级管理员)
 
 - 用户与角色管理
 - 请求监控
@@ -361,6 +361,6 @@ MountHub/
 | `/mounts` | 挂载管理 | 所有用户 |
 | `/transfers` | 传输任务 | 所有用户 |
 | `/profile` | 个人设置 | 所有用户 |
-| `/users` | 用户与权限 | 管理员 |
-| `/settings` | 系统设置 | 管理员 |
-| `/monitor` | 请求监控 | 管理员 |
+| `/users` | 用户与权限 | 管理员 | 超级管理员 |
+| `/settings` | 系统设置 | 超级管理员 |
+| `/monitor` | 请求监控 | 超级管理员 |

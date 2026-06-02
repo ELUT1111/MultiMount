@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import require_admin
+from app.dependencies import require_admin, require_super_admin
 from app.database import get_db
 from app.models.access_log import AccessLog
 from app.models.ip_blacklist import IPBlacklist
@@ -31,7 +31,7 @@ class HTTPSConfigRequest(BaseModel):
 # ── 系统信息 ───────────────────────────────────────────────
 
 @router.get("/info")
-async def get_system_info(_admin=Depends(require_admin)):
+async def get_system_info(_admin=Depends(require_super_admin)):
     """获取系统基本信息"""
     return system_service.get_system_info()
 
@@ -39,27 +39,27 @@ async def get_system_info(_admin=Depends(require_admin)):
 # ── HTTPS 配置 ─────────────────────────────────────────────
 
 @router.get("/https")
-async def get_https_status(_admin=Depends(require_admin)):
+async def get_https_status(_admin=Depends(require_super_admin)):
     """获取 HTTPS 配置状态"""
     return system_service.get_https_status()
 
 
 @router.post("/https/cert")
-async def upload_cert(cert: UploadFile = File(...), _admin=Depends(require_admin)):
+async def upload_cert(cert: UploadFile = File(...), _admin=Depends(require_super_admin)):
     """上传 SSL 证书文件"""
     content = await cert.read()
     return system_service.upload_certificate(content, cert.filename)
 
 
 @router.post("/https/key")
-async def upload_key(key: UploadFile = File(...), _admin=Depends(require_admin)):
+async def upload_key(key: UploadFile = File(...), _admin=Depends(require_super_admin)):
     """上传 SSL 私钥文件"""
     content = await key.read()
     return system_service.upload_key(content, key.filename)
 
 
 @router.put("/https")
-async def update_https_config(body: HTTPSConfigRequest, _admin=Depends(require_admin)):
+async def update_https_config(body: HTTPSConfigRequest, _admin=Depends(require_super_admin)):
     """更新 HTTPS 配置 (强制跳转/自动重定向)"""
     return system_service.update_https_config(
         force_https=body.force_https,
@@ -74,7 +74,7 @@ async def list_logs(
     log_type: str = Query("system", regex="^(system|access|transfer)$"),
     start_date: str = Query(""),
     end_date: str = Query(""),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """获取日志列表"""
     return system_service.list_logs(log_type, start_date, end_date)
@@ -83,7 +83,7 @@ async def list_logs(
 @router.post("/logs/export")
 async def export_logs(
     log_type: str = Query("system", regex="^(system|access|transfer)$"),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """导出日志文件"""
     path = system_service.export_logs(log_type)
@@ -95,7 +95,7 @@ async def export_logs(
 @router.post("/logs/clear")
 async def clear_logs(
     log_type: str = Query("system", regex="^(system|access|transfer)$"),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """清空日志"""
     result = system_service.clear_logs(log_type)
@@ -149,7 +149,7 @@ async def get_access_logs(
     page_size: int = Query(50, ge=1, le=200),
     ip: str = Query("", description="按 IP 筛选"),
     db: AsyncSession = Depends(get_db),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """分页查询访问日志"""
     query = select(AccessLog)
@@ -186,7 +186,7 @@ async def get_access_logs(
 @router.get("/access-stats")
 async def get_access_stats(
     db: AsyncSession = Depends(get_db),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """访问统计摘要: 总请求数、今日请求数、Top IP、Top 路径"""
     from datetime import datetime, timezone
@@ -232,7 +232,7 @@ async def get_operation_logs(
     mount_id: int | None = Query(None, description="按挂载 ID 筛选"),
     status: str = Query("", regex="^(|success|failed)$"),
     db: AsyncSession = Depends(get_db),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """分页查询业务操作审计日志。"""
     return await operation_log_service.list_operation_logs(
@@ -251,7 +251,7 @@ async def get_operation_logs(
 @router.get("/ip-blacklist", response_model=list[IPBlacklistOut])
 async def get_ip_blacklist(
     db: AsyncSession = Depends(get_db),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """获取 IP 黑名单列表"""
     return await ip_blacklist_service.get_all(db)
@@ -261,7 +261,7 @@ async def get_ip_blacklist(
 async def add_ip_blacklist(
     body: IPBlacklistCreate,
     db: AsyncSession = Depends(get_db),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """添加 IP 到黑名单"""
     return await ip_blacklist_service.add(db, body.ip_address, body.reason)
@@ -271,7 +271,7 @@ async def add_ip_blacklist(
 async def remove_ip_blacklist(
     ip: str,
     db: AsyncSession = Depends(get_db),
-    _admin=Depends(require_admin),
+    _admin=Depends(require_super_admin),
 ):
     """从黑名单移除 IP"""
     removed = await ip_blacklist_service.remove(db, ip)

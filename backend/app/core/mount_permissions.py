@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.core.policy import enforce_file_policy
+from app.core.roles import is_admin
 from app.services.mount_permission_service import check_mount_access
 
 
@@ -38,7 +39,7 @@ def check_basic_permission(permission: str):
     permission: "can_login" | "can_upload" | "can_download" | "can_modify" | "can_delete"
     """
     async def _check(current_user=Depends(get_current_user)):
-        if current_user.role and current_user.role.name == "admin":
+        if is_admin(current_user):
             return current_user
 
         role = current_user.role

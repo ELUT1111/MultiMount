@@ -8,6 +8,7 @@ from app.models.user import User
 from app.schemas.mount import MountCreate, MountOut, MountUpdate
 from app.services import mount_service
 from app.core.mount_permissions import check_basic_permission
+from app.core.roles import is_admin as has_admin_role
 from app.services.mount_permission_service import check_mount_access
 
 router = APIRouter()
@@ -58,7 +59,7 @@ async def _enrich_owner_names(mounts: list[MountOut], db: AsyncSession) -> list[
 
 async def _enrich_my_level(mounts: list[MountOut], user, db: AsyncSession) -> list[MountOut]:
     """批量填充当前用户对每个挂载的权限等级"""
-    is_admin = user.role and user.role.name == "admin"
+    is_admin = has_admin_role(user)
     for m in mounts:
         if is_admin:
             m.my_level = "readwrite"
@@ -100,7 +101,7 @@ async def create_mount(
     user=Depends(check_basic_permission("can_manage_mounts")),
     db: AsyncSession = Depends(get_db),
 ):
-    is_admin = user.role and user.role.name == "admin"
+    is_admin = has_admin_role(user)
     if body.type == "local" and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="服务器本地文件系统挂载仅管理员可创建")
 
@@ -136,7 +137,7 @@ async def update_mount(
     db: AsyncSession = Depends(get_db),
 ):
     # 管理员可编辑任意挂载, 普通用户仅可编辑自己的
-    is_admin = user.role and user.role.name == "admin"
+    is_admin = has_admin_role(user)
     existing = await mount_service.get_mount(db, mount_id)
     if not is_admin and existing.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能编辑自己创建的挂载")
@@ -161,7 +162,7 @@ async def delete_mount(
     user=Depends(check_basic_permission("can_manage_mounts")),
     db: AsyncSession = Depends(get_db),
 ):
-    is_admin = user.role and user.role.name == "admin"
+    is_admin = has_admin_role(user)
     await mount_service.delete_mount(db, mount_id, user_id=user.id, is_admin=is_admin)
 
 
@@ -172,7 +173,7 @@ async def test_connection(
     db: AsyncSession = Depends(get_db),
 ):
     mount = await mount_service.get_mount(db, mount_id)
-    is_admin = user.role and user.role.name == "admin"
+    is_admin = has_admin_role(user)
     if not is_admin and mount.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能测试自己创建的挂载")
     ok = await mount_service.test_mount_connection(db, mount_id)

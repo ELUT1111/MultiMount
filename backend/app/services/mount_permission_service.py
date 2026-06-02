@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.roles import is_admin
 from app.models.mount import Mount
 from app.models.mount_permission import MountPermission
 from app.models.notification import Notification
@@ -25,7 +26,7 @@ async def check_mount_access(db: AsyncSession, mount_id: int, user, required_lev
     required = LEVELS.get(required_level, 1)
 
     # 1. 管理员 → 全部权限
-    if user.role and user.role.name == "admin":
+    if is_admin(user):
         return "readwrite"
 
     # 2. 挂载所有者 → 全部权限
@@ -115,7 +116,7 @@ async def get_accessible_mount_ids(db: AsyncSession, user) -> set[int]:
     ids = set()
 
     # 管理员 → 全部挂载
-    if user.role and user.role.name == "admin":
+    if is_admin(user):
         result = await db.execute(select(Mount.id))
         return {row[0] for row in result.all()}
 

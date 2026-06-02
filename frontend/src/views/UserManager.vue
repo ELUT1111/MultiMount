@@ -7,7 +7,7 @@
     <PageHeader
       title="用户与权限管理"
       :meta="[
-        `${users.length} 个用户`,
+        `${visibleUsers.length} 个用户`,
         `${activeUserCount} 个启用`,
         `${roles.length} 个角色`,
       ]"
@@ -16,7 +16,11 @@
     <el-tabs v-model="activeTab" class="manager-tabs">
       <!-- 用户管理 -->
       <el-tab-pane label="用户管理" name="users">
-        <UserTable :users="users" :roles="roles" :loading="loading"
+        <UserTable
+          :users="visibleUsers"
+          :roles="roles"
+          :loading="loading"
+          :is-super-admin="auth.isSuperAdmin"
           @add="showUserDialog = true; editUser = null"
           @edit="handleEditUser" @toggle="toggleUser" @delete="handleDeleteUser" />
       </el-tab-pane>
@@ -27,13 +31,13 @@
           <div class="role-list">
             <div class="role-list-header">
               <span>角色列表</span>
-              <el-button type="primary" size="small" :icon="Plus" @click="handleNewRole">新建</el-button>
+              <el-button v-if="auth.isSuperAdmin" type="primary" size="small" :icon="Plus" @click="handleNewRole">新建</el-button>
             </div>
             <div v-for="role in roles" :key="role.id" class="role-item"
               :class="{ active: selectedRole?.id === role.id }"
               @click="selectedRole = role">
               <div class="role-copy">
-                <span class="role-name">{{ role.name }}</span>
+                <span class="role-name">{{ roleLabel(role.name) }}</span>
                 <span class="role-desc">{{ role.description || '无描述' }}</span>
               </div>
             </div>
@@ -41,6 +45,8 @@
           </div>
           <div class="role-detail">
             <RolePermission :role="selectedRole" :mounts="mounts.mounts"
+              :role-label="roleLabel(selectedRole?.name)"
+              :readonly="!auth.isSuperAdmin"
               @save="handleSaveRole" @reset="handleResetRole" />
           </div>
         </div>
@@ -48,7 +54,13 @@
     </el-tabs>
 
     <!-- 用户表单对话框 -->
-    <UserForm v-model="showUserDialog" :edit-user="editUser" :roles="roles" @submit="handleSaveUser" />
+    <UserForm
+      v-model="showUserDialog"
+      :edit-user="editUser"
+      :roles="assignableRoles"
+      :is-super-admin="auth.isSuperAdmin"
+      @submit="handleSaveUser"
+    />
   </div>
 </template>
 
@@ -58,12 +70,14 @@ import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listUsers, createUser, deleteUser, updateUser, listRoles, updateRole, createRole } from '@/api/users'
 import { useMountsStore } from '@/stores/mounts'
+import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserTable from '@/components/user/UserTable.vue'
 import UserForm from '@/components/user/UserForm.vue'
 import RolePermission from '@/components/user/RolePermission.vue'
 
 const mounts = useMountsStore()
+const auth = useAuthStore()
 const activeTab = ref('users')
 const users = ref([])
 const roles = ref([])
@@ -72,7 +86,25 @@ const selectedRole = ref(null)
 const showUserDialog = ref(false)
 const editUser = ref(null)
 
-const activeUserCount = computed(() => users.value.filter((user) => user.is_active).length)
+const visibleUsers = computed(() =>
+  auth.isSuperAdmin
+    ? users.value
+    : users.value.filter((user) => !['admin', 'super_admin'].includes(user.role?.name))
+)
+const activeUserCount = computed(() => visibleUsers.value.filter((user) => user.is_active).length)
+const assignableRoles = computed(() =>
+  roles.value.filter((role) => role.name !== 'super_admin' && (auth.isSuperAdmin || role.name !== 'admin'))
+)
+
+function roleLabel(name) {
+  const labels = {
+    super_admin: '超级管理员',
+    admin: '管理员',
+    user: '普通用户',
+    readonly: '只读用户',
+  }
+  return labels[name] || name || '未分配'
+}
 
 async function fetchUsers() {
   loading.value = true
@@ -153,6 +185,10 @@ function handleResetRole() {
 }
 
 async function handleSaveRole(roleData) {
+  if (!auth.isSuperAdmin) {
+    ElMessage.warning('普通管理员只能查看角色与权限配置')
+    return
+  }
   try {
     await updateRole(roleData.id, {
       permissions: roleData.permissions,
@@ -166,7 +202,12 @@ async function handleSaveRole(roleData) {
   }
 }
 
-onMounted(() => { fetchUsers(); fetchRoles(); mounts.fetchMounts() })
+onMounted(async () => {
+  try { await auth.refreshUser() } catch {}
+  fetchUsers()
+  fetchRoles()
+  mounts.fetchMounts()
+})
 </script>
 
 <style scoped>

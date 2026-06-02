@@ -3,25 +3,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestException, ConflictException, NotFoundException
+from app.core.roles import ADMIN_ROLE_NAMES
 from app.core.security import hash_password
 from app.models.role import Role
 from app.models.user import User
 
 
 async def list_users(
-    db: AsyncSession, page: int = 1, page_size: int = 20
+    db: AsyncSession, page: int = 1, page_size: int = 20, include_admins: bool = True
 ) -> tuple[list[User], int]:
     """分页查询用户列表"""
-    total_result = await db.execute(select(func.count(User.id)))
+    filters = []
+    if not include_admins:
+        filters.append((Role.name.is_(None)) | (~Role.name.in_(ADMIN_ROLE_NAMES)))
+
+    total_stmt = select(func.count(User.id)).outerjoin(Role)
+    if filters:
+        total_stmt = total_stmt.where(*filters)
+    total_result = await db.execute(total_stmt)
     total = total_result.scalar()
 
-    result = await db.execute(
-        select(User)
-        .options(selectinload(User.role))
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .order_by(User.id)
-    )
+    stmt = select(User).outerjoin(Role).options(selectinload(User.role))
+    if filters:
+        stmt = stmt.where(*filters)
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size).order_by(User.id)
+    result = await db.execute(stmt)
     users = list(result.scalars().all())
     return users, total
 
@@ -60,10 +66,16 @@ async def create_user(
     return user
 
 
-async def update_user(db: AsyncSession, user_id: int, **kwargs) -> User:
+async def update_user(
+    db: AsyncSession,
+    user_id: int,
+    allow_null_fields: set[str] | None = None,
+    **kwargs,
+) -> User:
     user = await get_user(db, user_id)
+    allow_null_fields = allow_null_fields or set()
     for key, value in kwargs.items():
-        if value is not None and hasattr(user, key):
+        if (value is not None or key in allow_null_fields) and hasattr(user, key):
             setattr(user, key, value)
     await db.flush()
     await db.refresh(user)

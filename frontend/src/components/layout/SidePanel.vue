@@ -71,7 +71,7 @@ const webdavLoading = ref(false)
 const testingOwnMounts = ref(false)
 const currentPath = computed(() => route.path)
 
-// 所有菜单项 (adminOnly 标记的仅管理员可见)
+// 所有菜单项 (adminOnly 仅管理员可见, superAdminOnly 仅超级管理员可见)
 const allMenuItems = [
   { path: '/files', label: '文件浏览器', icon: FolderOpened },
   { path: '/mounts', label: '挂载管理', icon: Connection },
@@ -79,14 +79,15 @@ const allMenuItems = [
   { path: '/shares', label: '分享链接', icon: Share },
   { path: '/trash', label: '回收站', icon: Delete },
   { path: '/users', label: '用户与权限', icon: User, adminOnly: true },
-  { path: '/settings', label: '系统设置', icon: Setting, adminOnly: true },
-  { path: '/monitor', label: '请求监控', icon: DataLine, adminOnly: true },
+  { path: '/settings', label: '系统设置', icon: Setting, superAdminOnly: true },
+  { path: '/monitor', label: '请求监控', icon: DataLine, superAdminOnly: true },
 ]
 
-// 根据管理员身份过滤菜单
-const menuItems = computed(() =>
-  auth.isAdmin ? allMenuItems : allMenuItems.filter((i) => !i.adminOnly)
-)
+const menuItems = computed(() => allMenuItems.filter((item) => {
+  if (item.superAdminOnly) return auth.isSuperAdmin
+  if (item.adminOnly) return auth.isAdmin
+  return true
+}))
 
 const iconMap = { managed: FolderOpened, local: FolderOpened, ftp: Connection, sftp: Connection, webdav: Monitor, oss: Cloudy, s3: Cloudy }
 function mountTypeIcon(type) { return iconMap[type] || Connection }
@@ -161,6 +162,7 @@ async function toggleWebDAV(running) {
 }
 
 onMounted(async () => {
+  try { await auth.refreshUser() } catch {}
   mounts.fetchMounts()
   // 获取 WebDAV 服务状态 (仅管理员)
   if (auth.isAdmin) {

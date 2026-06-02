@@ -1,6 +1,7 @@
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.roles import is_admin
 from app.services.mount_permission_service import check_mount_access
 
 
@@ -19,7 +20,7 @@ FILE_ACTION_POLICIES = {
 
 def check_role_permission(user, permission: str) -> None:
     """检查角色/用户组基础权限。管理员沿用现有模型: 默认拥有全部基础权限。"""
-    if user.role and user.role.name == "admin":
+    if is_admin(user):
         return
 
     if user.role is None:

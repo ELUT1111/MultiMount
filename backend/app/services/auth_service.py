@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestException, ConflictException, UnauthorizedException
+from app.core.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -103,7 +104,23 @@ async def seed_default_roles(db: AsyncSession):
     """初始化默认角色 (应用启动时调用)"""
     defaults = [
         {
-            "name": "admin",
+            "name": ROLE_SUPER_ADMIN,
+            "description": "超级管理员",
+            "permissions": {
+                "can_login": True,
+                "can_upload": True,
+                "can_download": True,
+                "can_modify": True,
+                "can_delete": True,
+                "can_manage_users": True,
+                "can_manage_mounts": True,
+                "can_manage_system": True,
+            },
+            "mount_permissions": {},
+            "qos_limits": None,
+        },
+        {
+            "name": ROLE_ADMIN,
             "description": "系统管理员",
             "permissions": {
                 "can_login": True,
@@ -164,16 +181,30 @@ async def seed_admin_user(db: AsyncSession):
     """初始化默认管理员用户 — 首次启动时生成随机密码并输出到日志"""
     import os
 
-    # 查找 admin 角色
-    role_result = await db.execute(select(Role).where(Role.name == "admin"))
-    admin_role = role_result.scalar_one_or_none()
+    # 初始 admin 账号固定持有唯一超级管理员角色。
+    role_result = await db.execute(select(Role).where(Role.name == ROLE_SUPER_ADMIN))
+    super_admin_role = role_result.scalar_one_or_none()
+    admin_role_result = await db.execute(select(Role).where(Role.name == ROLE_ADMIN))
+    admin_role = admin_role_result.scalar_one_or_none()
 
-    result = await db.execute(select(User).where(User.username == "admin"))
+    result = await db.execute(select(User).where(User.account == "admin"))
     admin = result.scalar_one_or_none()
     if admin is not None:
-        # 已存在则确保角色为 admin
-        if admin_role and admin.role_id != admin_role.id:
-            admin.role_id = admin_role.id
+        changed = False
+        if super_admin_role and admin.role_id != super_admin_role.id:
+            admin.role_id = super_admin_role.id
+            changed = True
+        if super_admin_role and admin_role:
+            duplicates = await db.execute(
+                select(User).where(
+                    User.role_id == super_admin_role.id,
+                    User.id != admin.id,
+                )
+            )
+            for user in duplicates.scalars().all():
+                user.role_id = admin_role.id
+                changed = True
+        if changed:
             await db.flush()
         return
 
@@ -185,9 +216,18 @@ async def seed_admin_user(db: AsyncSession):
         username="admin",
         email="admin@multimount.local",
         hashed_password=hash_password(password),
-        role_id=admin_role.id if admin_role else None,
+        role_id=super_admin_role.id if super_admin_role else None,
     )
     db.add(admin)
+    if super_admin_role and admin_role:
+        duplicates = await db.execute(
+            select(User).where(
+                User.role_id == super_admin_role.id,
+                User.account != "admin",
+            )
+        )
+        for user in duplicates.scalars().all():
+            user.role_id = admin_role.id
     await db.flush()
     logger.warning("=" * 60)
     logger.warning("管理员账号已创建 — 用户名: admin, 密码: %s", password)

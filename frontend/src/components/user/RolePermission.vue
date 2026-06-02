@@ -5,12 +5,15 @@
   <div v-if="role" class="role-permission">
     <div class="permission-header">
       <div>
-        <h3>{{ role.name }} - 权限配置</h3>
+        <h3>{{ roleLabel || role.name }} - 权限配置</h3>
         <p>配置基础操作、挂载点访问范围和连接速率限制。</p>
       </div>
       <div class="role-actions desktop-actions">
-        <el-button @click="$emit('reset')">重置</el-button>
-        <el-button type="primary" @click="$emit('save', localRole)">保存配置</el-button>
+        <el-tag v-if="readonly" type="info" effect="plain">只读</el-tag>
+        <template v-else>
+          <el-button @click="$emit('reset')">重置</el-button>
+          <el-button type="primary" @click="$emit('save', localRole)">保存配置</el-button>
+        </template>
       </div>
     </div>
 
@@ -18,12 +21,12 @@
     <section class="permission-section">
       <h4>基础权限</h4>
       <div class="perm-grid">
-        <el-checkbox v-model="localRole.permissions.can_login" label="允许登录" />
-        <el-checkbox v-model="localRole.permissions.can_upload" label="允许上传" />
-        <el-checkbox v-model="localRole.permissions.can_download" label="允许下载" />
-        <el-checkbox v-model="localRole.permissions.can_modify" label="允许修改" />
-        <el-checkbox v-model="localRole.permissions.can_delete" label="允许删除" />
-        <el-checkbox v-model="localRole.permissions.can_manage_mounts" label="允许挂载管理" />
+        <el-checkbox v-model="localRole.permissions.can_login" :disabled="readonly" label="允许登录" />
+        <el-checkbox v-model="localRole.permissions.can_upload" :disabled="readonly" label="允许上传" />
+        <el-checkbox v-model="localRole.permissions.can_download" :disabled="readonly" label="允许下载" />
+        <el-checkbox v-model="localRole.permissions.can_modify" :disabled="readonly" label="允许修改" />
+        <el-checkbox v-model="localRole.permissions.can_delete" :disabled="readonly" label="允许删除" />
+        <el-checkbox v-model="localRole.permissions.can_manage_mounts" :disabled="readonly" label="允许挂载管理" />
       </div>
     </section>
 
@@ -36,7 +39,7 @@
             <span class="mount-perm-name">{{ mount.name }}</span>
             <span class="mount-perm-type">{{ mount.type || 'mount' }}</span>
           </div>
-          <el-radio-group v-model="localRole.mount_permissions[mount.id]" size="small">
+          <el-radio-group v-model="localRole.mount_permissions[mount.id]" size="small" :disabled="readonly">
             <el-radio-button label="none">不可见</el-radio-button>
             <el-radio-button label="read">只读</el-radio-button>
             <el-radio-button label="readwrite">读写</el-radio-button>
@@ -51,20 +54,23 @@
       <h4>QoS 速率限制</h4>
       <el-form class="qos-form" label-position="top">
         <el-form-item label="最大下载速率(KB/s)">
-          <el-input-number v-model="localRole.qos_limits.max_download_kbps" :min="0" controls-position="right" />
+          <el-input-number v-model="localRole.qos_limits.max_download_kbps" :min="0" :disabled="readonly" controls-position="right" />
         </el-form-item>
         <el-form-item label="最大上传速率(KB/s)">
-          <el-input-number v-model="localRole.qos_limits.max_upload_kbps" :min="0" controls-position="right" />
+          <el-input-number v-model="localRole.qos_limits.max_upload_kbps" :min="0" :disabled="readonly" controls-position="right" />
         </el-form-item>
         <el-form-item label="最大并发连接数">
-          <el-input-number v-model="localRole.qos_limits.max_concurrent" :min="1" controls-position="right" />
+          <el-input-number v-model="localRole.qos_limits.max_concurrent" :min="1" :disabled="readonly" controls-position="right" />
         </el-form-item>
       </el-form>
     </section>
 
     <div class="role-actions mobile-actions">
-      <el-button @click="$emit('reset')">重置</el-button>
-      <el-button type="primary" @click="$emit('save', localRole)">保存配置</el-button>
+      <el-tag v-if="readonly" type="info" effect="plain">只读</el-tag>
+      <template v-else>
+        <el-button @click="$emit('reset')">重置</el-button>
+        <el-button type="primary" @click="$emit('save', localRole)">保存配置</el-button>
+      </template>
     </div>
   </div>
   <div v-else class="role-permission empty">
@@ -78,6 +84,8 @@ import { reactive, watch } from 'vue'
 const props = defineProps({
   role: { type: Object, default: null },
   mounts: { type: Array, default: () => [] },
+  roleLabel: { type: String, default: '' },
+  readonly: { type: Boolean, default: false },
 })
 
 defineEmits(['save', 'reset'])
@@ -97,7 +105,7 @@ watch(() => props.role, (val) => {
     localRole.name = val.name
     localRole.permissions = { ...val.permissions }
     localRole.mount_permissions = { ...(val.mount_permissions || {}) }
-    localRole.qos_limits = { ...val.qos_limits }
+    localRole.qos_limits = { max_download_kbps: 0, max_upload_kbps: 0, max_concurrent: 5, ...(val.qos_limits || {}) }
   }
 }, { deep: true, immediate: true })
 </script>
