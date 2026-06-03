@@ -30,7 +30,7 @@
     <div class="sidebar-bottom mount-section">
       <div class="webdav-toggle" v-if="auth.isAdmin">
         <span class="webdav-label">WebDAV 服务</span>
-        <el-switch v-model="webdavRunning" size="small" :loading="webdavLoading" @change="toggleWebDAV" />
+        <el-switch :model-value="webdavRunning" size="small" :loading="webdav.loading" @change="toggleWebDAV" />
       </div>
       <el-button
         type="primary"
@@ -55,7 +55,7 @@ import { Delete, FolderOpened, Connection, User, Upload, Setting, Monitor, Cloud
 import { useMountsStore } from '@/stores/mounts'
 import { useFilesStore } from '@/stores/files'
 import { useAuthStore } from '@/stores/auth'
-import { getWebDAVStatus, startWebDAV, stopWebDAV } from '@/api/webdav'
+import { useWebDAVStore } from '@/stores/webdav'
 
 defineProps({
   compact: { type: Boolean, default: false },
@@ -66,10 +66,10 @@ const route = useRoute()
 const mounts = useMountsStore()
 const files = useFilesStore()
 const auth = useAuthStore()
-const webdavRunning = ref(false)
-const webdavLoading = ref(false)
+const webdav = useWebDAVStore()
 const testingOwnMounts = ref(false)
 const currentPath = computed(() => route.path)
+const webdavRunning = computed(() => webdav.running)
 
 // 所有菜单项 (adminOnly 仅管理员可见, superAdminOnly 仅超级管理员可见)
 const allMenuItems = [
@@ -144,20 +144,16 @@ async function testOwnMounts() {
 }
 
 async function toggleWebDAV(running) {
-  webdavLoading.value = true
   try {
     if (running) {
-      await startWebDAV()
+      await webdav.start()
       ElMessage.success('WebDAV 服务已启动')
     } else {
-      await stopWebDAV()
+      await webdav.stop()
       ElMessage.success('WebDAV 服务已停止')
     }
   } catch {
-    webdavRunning.value = !running // 回滚状态
     ElMessage.error('WebDAV 操作失败')
-  } finally {
-    webdavLoading.value = false
   }
 }
 
@@ -167,8 +163,7 @@ onMounted(async () => {
   // 获取 WebDAV 服务状态 (仅管理员)
   if (auth.isAdmin) {
     try {
-      const status = await getWebDAVStatus()
-      webdavRunning.value = status.running
+      await webdav.fetchStatus()
     } catch {
       // 静默失败
     }

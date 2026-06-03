@@ -138,7 +138,7 @@
           <el-card class="settings-card compact-card">
             <div class="webdav-status">
               <StatusBadge :status="webdavRunning ? 'online' : 'offline'" :label="'WebDAV 服务' + (webdavRunning ? '运行中' : '已停止')" />
-              <el-switch v-model="webdavRunning" @change="handleWebdavToggle" />
+              <el-switch :model-value="webdavRunning" :loading="webdav.loading" @change="handleWebdavToggle" />
             </div>
             <div class="service-url">
               <span>访问地址</span>
@@ -242,13 +242,14 @@ import { CircleCheckFilled, CircleCloseFilled, UploadFilled, Download } from '@e
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useMountsStore } from '@/stores/mounts'
 import { useAppStore } from '@/stores/app'
-import { getWebDAVStatus, startWebDAV, stopWebDAV, updateWebDAVConfig } from '@/api/webdav'
+import { useWebDAVStore } from '@/stores/webdav'
 import { getSystemInfo, getHttpsStatus, uploadCert, uploadKey, updateHttpsConfig, getLogs, exportLogs, clearLogs } from '@/api/system'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 
 const mounts = useMountsStore()
 const appPrefs = useAppStore()
+const webdav = useWebDAVStore()
 const activeMenu = ref('basic')
 
 // 系统信息
@@ -327,61 +328,37 @@ async function handleHttpsConfigChange() {
 }
 
 // WebDAV
-const webdavRunning = ref(false)
-const webdavConfig = reactive({
-  host: '0.0.0.0', port: 8080, ssl: false, root_mount: '',
-  access_log: true, log_path: '/var/log/webdav/access.log',
-  recycle_delete: true, url: 'http://localhost:8080/',
-})
+const webdavRunning = computed(() => webdav.running)
+const webdavConfig = webdav.config
 
 function webdavPayload() {
-  return {
-    host: webdavConfig.host,
-    port: webdavConfig.port,
-    ssl: webdavConfig.ssl,
-    root_mount: webdavConfig.root_mount || null,
-    access_log: webdavConfig.access_log,
-    log_path: webdavConfig.log_path,
-    recycle_delete: webdavConfig.recycle_delete,
-  }
+  return webdav.payload()
 }
 
 async function fetchWebDAVStatus() {
   try {
-    const status = await getWebDAVStatus()
-    webdavRunning.value = status.running
-    webdavConfig.host = status.host || '0.0.0.0'
-    webdavConfig.port = status.port || 8080
-    webdavConfig.ssl = status.ssl || false
-    webdavConfig.root_mount = status.root_mount || ''
-    webdavConfig.access_log = status.access_log ?? true
-    webdavConfig.log_path = status.log_path || '/var/log/webdav/access.log'
-    webdavConfig.recycle_delete = status.recycle_delete ?? true
-    webdavConfig.url = status.url || `${webdavConfig.ssl ? 'https' : 'http'}://localhost:${webdavConfig.port}/`
+    await webdav.fetchStatus()
   } catch {}
 }
 
 async function handleWebdavToggle(running) {
   try {
     if (running) {
-      await startWebDAV(webdavPayload())
+      await webdav.start(webdavPayload())
       ElMessage.success('WebDAV 服务已启动')
     } else {
-      await stopWebDAV()
+      await webdav.stop()
       ElMessage.success('WebDAV 服务已停止')
     }
-    await fetchWebDAVStatus()
   } catch (e) {
     ElMessage.error(`操作失败: ${e.response?.data?.detail || e.message}`)
-    webdavRunning.value = !running
   }
 }
 
 async function handleSaveWebdav() {
   try {
-    await updateWebDAVConfig(webdavPayload())
+    await webdav.saveConfig(webdavPayload())
     ElMessage.success('WebDAV 配置已保存')
-    await fetchWebDAVStatus()
   } catch (e) {
     ElMessage.error(`保存失败: ${e.response?.data?.detail || e.message}`)
   }
