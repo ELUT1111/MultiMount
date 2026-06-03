@@ -327,6 +327,22 @@ async def resume_task(db: AsyncSession, task_id: int) -> TransferTask:
     return task
 
 
+async def retry_task(db: AsyncSession, task_id: int) -> TransferTask:
+    task = await get_task(db, task_id)
+    if task.status != "failed":
+        raise BadRequestException(f"任务状态 {task.status} 不支持重试")
+    task.status = "queued"
+    task.transferred = 0
+    task.speed = 0
+    task.error_message = None
+    task.checkpoint = {}
+    await db.commit()
+    await db.refresh(task)
+    await broadcast_progress(task)
+    _dispatch_scheduler()
+    return task
+
+
 async def cancel_task(db: AsyncSession, task_id: int) -> None:
     task = await get_task(db, task_id)
     if task.status in ("completed", "failed"):

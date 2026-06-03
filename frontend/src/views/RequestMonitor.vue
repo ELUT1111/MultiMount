@@ -419,7 +419,14 @@ async function quickBlock(ip) {
 // ── 辅助 ─────────────────────────────────────────────────────
 function formatTime(iso) {
   if (!iso) return '-'
-  return new Date(iso).toLocaleString('zh-CN')
+  return new Date(iso).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 
 function methodTagType(m) {

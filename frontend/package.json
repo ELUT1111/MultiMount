@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --mode http",
+    "dev:http": "vite --mode http",
+    "dev:https": "vite --mode https",
     "build": "vite build",
     "preview": "vite preview"
   },

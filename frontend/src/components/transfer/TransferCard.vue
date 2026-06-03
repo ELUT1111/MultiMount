@@ -108,9 +108,10 @@ const typeLabel = computed(() => ({
 }[props.task.type] || props.task.type))
 
 const isDownload = computed(() => props.task.type === 'download')
+const canRetryDownload = computed(() => props.task.local && props.task.type === 'download' && Boolean(props.task.source_mount_id || props.task.mount_id) && String(props.task.source_path || '').startsWith('/'))
 const canPause = computed(() => !isDownload.value && ['queued', 'pending', 'running'].includes(props.task.status))
 const canResume = computed(() => !isDownload.value && props.task.status === 'paused')
-const canRetry = computed(() => !isDownload.value && props.task.status === 'failed')
+const canRetry = computed(() => props.task.status === 'failed' && (!isDownload.value || canRetryDownload.value))
 const canCancel = computed(() => !['completed', 'failed'].includes(props.task.status))
 const canRemove = computed(() => ['completed', 'failed'].includes(props.task.status))
 

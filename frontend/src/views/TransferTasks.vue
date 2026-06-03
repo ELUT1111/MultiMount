@@ -72,7 +72,7 @@
         @pause="transfers.pauseTask"
         @resume="transfers.resumeTask"
         @cancel="handleCancel"
-        @retry="transfers.retryTask"
+        @retry="handleRetry"
       />
     </div>
 
@@ -137,6 +137,15 @@ async function handleCancel(id) {
   await ElMessageBox.confirm(removing ? '确定删除此任务记录？' : '确定取消此任务？', '确认', { type: 'warning' })
   await transfers.cancelTask(id)
   ElMessage.success(removing ? '已删除' : '已取消')
+}
+
+async function handleRetry(id) {
+  try {
+    await transfers.retryTask(id)
+    ElMessage.success('已重新加入传输队列')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message || '重试失败')
+  }
 }
 
 async function handleBatchPause() {

@@ -4,27 +4,18 @@
 """
 import logging
 from collections import defaultdict
-from datetime import timezone
 
 from sqlalchemy import delete as sa_delete, select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.notification import Notification
+from app.utils.datetime_utils import iso_utc
 
 logger = logging.getLogger("multimount.notification")
 
 # 全局 WebSocket 连接管理 (按用户 ID 索引)
 _notify_ws: dict[int, list] = {}
 _PENDING_PUSHES_KEY = "notification_pending_pushes"
-
-
-def _iso_utc(value) -> str:
-    """Serialize DB datetimes as explicit UTC to avoid browser local-time drift."""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    else:
-        value = value.astimezone(timezone.utc)
-    return value.isoformat().replace("+00:00", "Z")
 
 
 def _notification_payload(notif: Notification) -> dict:
@@ -37,7 +28,7 @@ def _notification_payload(notif: Notification) -> dict:
         "is_archived": notif.is_archived,
         "related_id": notif.related_id,
         "metadata": notif.metadata_,
-        "created_at": _iso_utc(notif.created_at),
+        "created_at": iso_utc(notif.created_at),
     }
 
 

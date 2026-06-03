@@ -3,35 +3,66 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.core.ssl_manager import load_config, save_config, save_cert_file, validate_cert
+from app.core.ssl_manager import load_config, runtime_https_enabled, runtime_ssl_paths, save_config, save_cert_file, validate_cert
 
 logger = logging.getLogger("multimount.system")
 
 LOGS_DIR = Path("logs")
 
 
-def get_https_status() -> dict:
+def _expiry_info(expiry_text: str) -> tuple[int | None, bool]:
+    if not expiry_text:
+        return None, False
+    try:
+        if expiry_text.endswith(" UTC"):
+            expiry = datetime.strptime(expiry_text, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+            days_remaining = max((expiry - datetime.now(timezone.utc)).days, 0)
+            return days_remaining, days_remaining <= 30
+    except ValueError:
+        return None, False
+    return None, False
+
+
+def _request_is_https(request=None) -> bool:
+    if request is None:
+        return False
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if forwarded_proto:
+        return forwarded_proto.split(",", 1)[0].strip().lower() == "https"
+    return request.url.scheme == "https"
+
+
+def get_https_status(request=None) -> dict:
     config = load_config()
-    days_remaining = None
-    expiry_warning = False
-    if config.cert_expiry:
-        try:
-            if config.cert_expiry.endswith(" UTC"):
-                expiry = datetime.strptime(config.cert_expiry, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
-                days_remaining = max((expiry - datetime.now(timezone.utc)).days, 0)
-                expiry_warning = days_remaining <= 30
-        except ValueError:
-            days_remaining = None
+    runtime = runtime_ssl_paths()
+    runtime_cert_result = None
+    if runtime["cert_path"]:
+        runtime_cert_result = validate_cert(runtime["cert_path"])
+
+    runtime_cert_valid = bool(runtime_cert_result and runtime_cert_result["valid"])
+    runtime_cert_expiry = runtime_cert_result["expiry"] if runtime_cert_result else ""
+    cert_valid = config.cert_valid or runtime_cert_valid
+    cert_expiry = config.cert_expiry or runtime_cert_expiry
+    days_remaining, expiry_warning = _expiry_info(cert_expiry)
+    active_https = _request_is_https(request)
+    runtime_https = bool(runtime["cert_path"] and runtime["key_path"])
 
     return {
-        "cert_valid": config.cert_valid,
-        "cert_expiry": config.cert_expiry,
+        "https_active": active_https,
+        "runtime_https": runtime_https,
+        "runtime_cert_valid": runtime_cert_valid,
+        "runtime_cert_path": runtime["cert_path"],
+        "runtime_key_path": runtime["key_path"],
+        "cert_valid": cert_valid,
+        "cert_expiry": cert_expiry,
         "cert_days_remaining": days_remaining,
         "cert_expiry_warning": expiry_warning,
         "force_https": config.force_https,
         "auto_redirect": config.auto_redirect,
-        "cert_path": config.cert_path,
-        "key_path": config.key_path,
+        "cert_path": config.cert_path or runtime["cert_path"],
+        "key_path": config.key_path or runtime["key_path"],
+        "managed_cert_path": config.cert_path,
+        "managed_key_path": config.key_path,
         "reverse_proxy": {
             "nginx": [
                 "proxy_set_header Host $host;",
@@ -46,6 +77,18 @@ def get_https_status() -> dict:
                 "Enable force_https only after direct TLS or proxy TLS is working.",
             ],
         },
+    }
+
+
+def get_https_redirect_policy(request=None) -> dict:
+    config = load_config()
+    runtime_https = runtime_https_enabled()
+    return {
+        "https_active": _request_is_https(request),
+        "runtime_https": runtime_https,
+        "force_https": config.force_https,
+        "auto_redirect": config.auto_redirect,
+        "redirect_enabled": bool(config.force_https and config.auto_redirect and runtime_https),
     }
 
 

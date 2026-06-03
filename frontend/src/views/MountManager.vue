@@ -113,7 +113,7 @@
 
       <!-- 步骤1: 选择类型 -->
       <div v-if="addStep === 0" class="type-grid">
-        <div v-for="t in mountTypes" :key="t.value" class="type-card" :class="{ selected: addForm.type === t.value }" @click="addForm.type = t.value">
+        <div v-for="t in mountTypes" :key="t.value" class="type-card" :class="{ selected: addForm.type === t.value }" @click="selectMountType(t.value)">
           <el-icon :size="32"><component :is="t.icon" /></el-icon>
           <span>{{ t.label }}</span>
         </div>
@@ -165,9 +165,20 @@
           <el-form-item label="私钥路径"><el-input v-model="addForm.config.private_key" placeholder="可选" /></el-form-item>
         </template>
         <template v-else-if="addForm.type === 'webdav'">
-          <el-form-item label="服务URL" required><el-input v-model="addForm.config.url" placeholder="https://dav.example.com" /></el-form-item>
+          <el-form-item label="服务地址" required><el-input v-model="addForm.config.url" placeholder="http://example.com" /></el-form-item>
+          <el-form-item label="端口"><el-input-number v-model="addForm.config.port" :min="1" :max="65535" placeholder="自动" /></el-form-item>
+          <el-form-item label="根路径"><el-input v-model="addForm.config.root_path" placeholder="/webdav" /></el-form-item>
           <el-form-item label="用户名"><el-input v-model="addForm.config.username" /></el-form-item>
           <el-form-item label="密码"><el-input v-model="addForm.config.password" type="password" show-password /></el-form-item>
+          <el-form-item label="认证方式">
+            <el-segmented
+              v-model="addForm.config.auth_type"
+              :options="[
+                { label: 'Basic', value: 'basic' },
+                { label: 'Digest', value: 'digest' },
+              ]"
+            />
+          </el-form-item>
           <el-form-item label="忽略SSL"><el-switch v-model="addForm.config.verify_ssl" /></el-form-item>
         </template>
         <template v-else-if="addForm.type === 'oss'">
@@ -328,10 +339,16 @@ const allMountTypes = [
 
 const mountTypes = computed(() => allMountTypes.filter((type) => auth.isAdmin || type.value !== 'local'))
 
+const protocolDefaults = {
+  ftp: { port: 21, passive_mode: true },
+  sftp: { port: 22 },
+  webdav: { port: null, root_path: '/webdav', auth_type: 'basic', verify_ssl: true },
+}
+
 const defaultConfig = () => ({
   type: '', name: '',
-  config: { path: '', host: '', port: 21, username: '', password: '', passive_mode: true,
-            url: '', verify_ssl: true, private_key: '',
+  config: { path: '', host: '', port: null, username: '', password: '', passive_mode: true,
+            url: '', root_path: '', auth_type: 'basic', verify_ssl: true, private_key: '',
             access_key_id: '', access_key_secret: '', bucket: '', endpoint: '', region: 'us-east-1',
             endpoint_url: '', prefix: '' },
   advanced_config: { cache_ttl: 300, timeout: 30, auto_reconnect: true },
@@ -357,9 +374,74 @@ const statusTagType = (s) => ({ online: 'success', offline: 'danger', connecting
 const levelLabel = (l) => ({ read: '只读', readwrite: '读写', none: '无权限' }[l] || l)
 const levelTagType = (l) => ({ read: 'info', readwrite: 'success', none: 'danger' }[l] || 'info')
 
+function selectMountType(type) {
+  if (addForm.type === type) return
+  addForm.type = type
+  Object.assign(addForm.config, defaultConfig().config, protocolDefaults[type] || {})
+}
+
+function normalizeWebDavConfig(config) {
+  const normalized = { ...config }
+  normalized.auth_type = ['basic', 'digest'].includes(normalized.auth_type) ? normalized.auth_type : 'basic'
+  const rawUrl = String(normalized.url || '').trim()
+  if (!rawUrl) return normalized
+
+  try {
+    const url = new URL(rawUrl)
+    const port = Number(normalized.port)
+    const rootPath = String(normalized.root_path || '').trim()
+    if (port >= 1 && port <= 65535) {
+      url.port = String(port)
+    } else {
+      normalized.port = url.port ? Number(url.port) : null
+    }
+    if (rootPath) {
+      url.pathname = rootPath.startsWith('/') ? rootPath : `/${rootPath}`
+      normalized.root_path = url.pathname
+    } else {
+      normalized.root_path = url.pathname || '/'
+    }
+    normalized.url = url.toString().replace(/\/$/, rawUrl.endsWith('/') ? '/' : '')
+  } catch {
+    normalized.url = rawUrl
+  }
+  return normalized
+}
+
+function splitWebDavConfigForForm(config) {
+  const normalized = normalizeWebDavConfig(config)
+  const rawUrl = String(normalized.url || '').trim()
+  if (!rawUrl) return normalized
+
+  try {
+    const url = new URL(rawUrl)
+    normalized.root_path = normalized.root_path || url.pathname || '/'
+    normalized.port = normalized.port ?? (url.port ? Number(url.port) : null)
+    url.pathname = ''
+    url.search = ''
+    url.hash = ''
+    url.port = ''
+    normalized.url = url.toString().replace(/\/$/, '')
+  } catch {
+    normalized.url = rawUrl
+  }
+  return normalized
+}
+
+function formatWebDavEndpoint(config) {
+  const normalized = normalizeWebDavConfig(config)
+  return normalized.url || '-'
+}
+
+function normalizeMountPayloadConfig(type, config) {
+  if (type === 'webdav') return normalizeWebDavConfig(config)
+  return { ...config }
+}
+
 function mountEndpoint(mount) {
   const cfg = mount.config || {}
   if (mount.type === 'managed') return 'MountHub 托管目录'
+  if (mount.type === 'webdav') return formatWebDavEndpoint(cfg)
   const base = cfg.host || cfg.url || cfg.path || cfg.bucket || '-'
   return cfg.port ? `${base}:${cfg.port}` : base
 }
@@ -367,6 +449,7 @@ function mountEndpoint(mount) {
 function mountPath(mount) {
   const cfg = mount.config || {}
   if (mount.type === 'managed') return cfg.directory_name || cfg.path || '/'
+  if (mount.type === 'webdav') return cfg.root_path || normalizeWebDavConfig(cfg).root_path || '/'
   return cfg.path || cfg.prefix || cfg.endpoint || cfg.endpoint_url || '/'
 }
 
@@ -454,7 +537,7 @@ function validateCurrentStep() {
       local: [['path', '请选择目录路径']],
       ftp: [['host', '请输入主机地址']],
       sftp: [['host', '请输入主机地址'], ['username', '请输入用户名']],
-      webdav: [['url', '请输入 WebDAV 服务 URL']],
+      webdav: [['url', '请输入 WebDAV 服务地址']],
       oss: [
         ['access_key_id', '请输入 AccessKey ID'],
         ['access_key_secret', '请输入 AccessKey Secret'],
@@ -489,6 +572,9 @@ function handleEdit(mount) {
   addForm.type = mount.type
   addForm.name = mount.name
   Object.assign(addForm.config, mount.config || {})
+  if (mount.type === 'webdav') {
+    Object.assign(addForm.config, splitWebDavConfigForForm(addForm.config))
+  }
   Object.assign(addForm.advanced_config, mount.advanced_config || { cache_ttl: 300, timeout: 30, auto_reconnect: true })
   addStep.value = 0
   showAddDialog.value = true
@@ -526,7 +612,7 @@ async function handleSave() {
     const payload = {
       name: addForm.name,
       type: addForm.type,
-      config: { ...addForm.config },
+      config: normalizeMountPayloadConfig(addForm.type, addForm.config),
       advanced_config: { ...addForm.advanced_config },
     }
     if (editMode.value && editMountId.value) {

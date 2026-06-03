@@ -1,9 +1,12 @@
 import asyncio
 import mimetypes
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import AsyncIterator
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import requests
+from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from webdav3.client import Client
 
 from app.adapters.base import BaseAdapter, FileInfo
@@ -22,23 +25,95 @@ def _parse_webdav_time(time_str: str | None) -> datetime | None:
         return None
 
 
+def _normalize_webdav_url(url: str, port: int | None = None, root_path: str = "") -> tuple[str, str]:
+    clean_url = url.strip()
+    if not clean_url:
+        return clean_url, ""
+
+    parsed = urlsplit(clean_url)
+    if not parsed.scheme or not parsed.netloc:
+        return clean_url.rstrip("/"), ""
+
+    port_number = None
+    if port is not None:
+        try:
+            parsed_port = int(port)
+        except (TypeError, ValueError):
+            parsed_port = None
+        if parsed_port is not None and 1 <= parsed_port <= 65535:
+            port_number = parsed_port
+
+    hostname = parsed.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+
+    username = parsed.username or ""
+    password = parsed.password or ""
+    credentials = ""
+    if username:
+        credentials = username
+        if password:
+            credentials += f":{password}"
+        credentials += "@"
+
+    netloc = f"{credentials}{hostname}"
+    if port_number is not None:
+        netloc += f":{port_number}"
+    elif parsed.port is not None:
+        netloc += f":{parsed.port}"
+
+    path = parsed.path
+    if root_path:
+        path = root_path if root_path.startswith("/") else f"/{root_path}"
+    hostname = urlunsplit((parsed.scheme, netloc, "", parsed.query, parsed.fragment)).rstrip("/")
+    return hostname, path.rstrip("/") or ""
+
+
+def _normalize_auth_type(auth_type: str) -> str:
+    value = (auth_type or "basic").strip().lower()
+    return value if value in {"basic", "digest"} else "basic"
+
+
+def _webdav_item_name(info: dict) -> str:
+    raw_name = info.get("name")
+    if raw_name:
+        return str(raw_name).rstrip("/")
+
+    raw_path = info.get("path") or ""
+    path = unquote(urlsplit(str(raw_path)).path).rstrip("/")
+    if not path:
+        return ""
+    return PurePosixPath(path).name
+
+
 @AdapterRegistry.register("webdav")
 class WebDAVAdapter(BaseAdapter):
     """WebDAV 客户端适配器 (基于 webdavclient3)"""
 
     def __init__(self, url: str, username: str = "", password: str = "",
-                 verify_ssl: bool = True, **_kwargs):
+                 verify_ssl: bool = True, port: int | None = None,
+                 root_path: str = "", auth_type: str = "basic", **_kwargs):
+        hostname, webdav_root = _normalize_webdav_url(url, port, root_path)
+        self._auth_type = _normalize_auth_type(auth_type)
         self._options = {
-            "webdav_hostname": url,
+            "webdav_hostname": hostname,
+            "webdav_root": webdav_root,
             "webdav_login": username,
             "webdav_password": password,
             "webdav_verify": verify_ssl,
         }
-        self._base_url = url.rstrip("/")
+        self._base_url = f"{hostname.rstrip('/')}{webdav_root}".rstrip("/")
         self._username = username
         self._password = password
         self._verify_ssl = verify_ssl
         self._client: Client | None = None
+
+    def _auth(self):
+        if not self._username or not self._password:
+            return None
+        if self._auth_type == "digest":
+            return HTTPDigestAuth(self._username, self._password)
+        return HTTPBasicAuth(self._username, self._password)
 
     def _get_client(self) -> Client:
         if self._client is None:
@@ -51,6 +126,7 @@ class WebDAVAdapter(BaseAdapter):
     async def connect(self) -> bool:
         def _connect():
             self._client = Client(self._options)
+            self._client.session.auth = self._auth()
             return self._client.check()
         return await asyncio.to_thread(_connect)
 
@@ -71,7 +147,7 @@ class WebDAVAdapter(BaseAdapter):
             items = []
             info_list = client.list(clean, get_info=True)
             for info in info_list:
-                name = info.get("name", "").rstrip("/")
+                name = _webdav_item_name(info)
                 if not name or name in (".", ".."):
                     continue
                 is_dir = info.get("isdir", False)
@@ -115,7 +191,7 @@ class WebDAVAdapter(BaseAdapter):
 
         def _download():
             resp = requests.get(
-                url, auth=(self._username, self._password),
+                url, auth=self._auth(),
                 verify=self._verify_ssl, stream=True,
             )
             resp.raise_for_status()
@@ -140,7 +216,6 @@ class WebDAVAdapter(BaseAdapter):
         import queue as queue_mod
         q: queue_mod.Queue[bytes | None] = queue_mod.Queue(maxsize=16)
         exc_holder: list[Exception] = []
-        loop = asyncio.get_event_loop()
 
         async def _producer():
             try:
@@ -163,7 +238,7 @@ class WebDAVAdapter(BaseAdapter):
         def _upload():
             resp = requests.put(
                 url, data=_chunk_iter(),
-                auth=(self._username, self._password),
+                auth=self._auth(),
                 verify=self._verify_ssl,
                 headers={"Content-Type": content_type},
             )

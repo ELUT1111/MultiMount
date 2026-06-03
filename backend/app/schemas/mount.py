@@ -36,6 +36,9 @@ class SFTPConfig(MountConfig):
 
 class WebDAVConfig(MountConfig):
     url: str = Field(..., description="WebDAV 服务地址")
+    port: int | None = Field(None, ge=1, le=65535, description="WebDAV 服务端口。留空时使用 URL 中的端口或协议默认端口")
+    root_path: str = Field("", description="WebDAV 根路径，例如 /webdav")
+    auth_type: str = Field("basic", pattern="^(basic|digest)$", description="WebDAV 认证方式: basic 或 digest")
     username: str = ""
     password: str = ""
     verify_ssl: bool = True

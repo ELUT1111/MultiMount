@@ -4,7 +4,7 @@
 import os
 import platform
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from app.schemas.ip_blacklist import IPBlacklistCreate, IPBlacklistOut
 from app.services import system_service
 from app.services import ip_blacklist_service
 from app.services import operation_log_service
+from app.utils.datetime_utils import iso_utc
 
 router = APIRouter()
 
@@ -39,9 +40,15 @@ async def get_system_info(_admin=Depends(require_super_admin)):
 # ── HTTPS 配置 ─────────────────────────────────────────────
 
 @router.get("/https")
-async def get_https_status(_admin=Depends(require_super_admin)):
+async def get_https_status(request: Request, _admin=Depends(require_super_admin)):
     """获取 HTTPS 配置状态"""
-    return system_service.get_https_status()
+    return system_service.get_https_status(request)
+
+
+@router.get("/https/redirect-policy")
+async def get_https_redirect_policy(request: Request):
+    """获取 HTTP 到 HTTPS 自动跳转策略。仅返回非敏感运行状态。"""
+    return system_service.get_https_redirect_policy(request)
 
 
 @router.post("/https/cert")
@@ -176,7 +183,7 @@ async def get_access_logs(
                 "id": r.id, "ip_address": r.ip_address, "method": r.method,
                 "path": r.path, "status_code": r.status_code,
                 "response_time_ms": r.response_time_ms, "user_agent": r.user_agent,
-                "user_id": r.user_id, "created_at": r.created_at.isoformat() if r.created_at else None,
+                "user_id": r.user_id, "created_at": iso_utc(r.created_at),
             }
             for r in logs
         ],

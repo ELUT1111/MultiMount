@@ -1,6 +1,9 @@
 # IP 黑名单请求/响应 Schema
 from pydantic import BaseModel
+from pydantic import field_serializer
 from datetime import datetime
+
+from app.utils.datetime_utils import iso_utc
 
 
 class IPBlacklistCreate(BaseModel):
@@ -16,6 +19,10 @@ class IPBlacklistOut(BaseModel):
     reason: str | None
     is_active: bool
     created_at: datetime
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: datetime):
+        return iso_utc(value)
 
     class Config:
         from_attributes = True

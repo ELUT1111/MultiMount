@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { listTransfers, pauseTransfer, resumeTransfer, cancelTransfer, retryTransfer } from '@/api/transfers'
+import { downloadFile } from '@/api/files'
 
 let localTaskSeq = 0
 const localTaskCancels = new Map()
@@ -10,6 +11,15 @@ function isLocalTaskId(id) {
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 export const useTransfersStore = defineStore('transfers', {
@@ -94,9 +104,64 @@ export const useTransfersStore = defineStore('transfers', {
     },
 
     async retryTask(id) {
-      if (isLocalTaskId(id)) return
+      if (isLocalTaskId(id)) {
+        await this.retryLocalDownloadTask(id)
+        return
+      }
       await retryTransfer(id)
       await this.fetchTasks()
+    },
+
+    async retryLocalDownloadTask(id) {
+      const task = this.tasks.find((item) => item.id === id)
+      if (!task || task.type !== 'download' || task.status !== 'failed') return
+      const mountId = task.source_mount_id || task.mount_id
+      if (!mountId || !task.source_path) {
+        this.updateLocalTask(id, { error_message: '缺少下载任务参数，无法重试' })
+        throw new Error('缺少下载任务参数，无法重试')
+      }
+
+      const controller = new AbortController()
+      localTaskCancels.set(id, () => controller.abort())
+      this.updateLocalTask(id, {
+        status: 'running',
+        transferred: 0,
+        speed: 0,
+        error_message: null,
+      })
+
+      let lastLoaded = 0
+      let lastAt = performance.now()
+      try {
+        const blob = await downloadFile(mountId, task.source_path, {
+          signal: controller.signal,
+          suppressErrorMessage: true,
+          onDownloadProgress: (event) => {
+            const loaded = Number(event.loaded) || 0
+            const total = Number(event.total) || task.file_size || 0
+            const now = performance.now()
+            const elapsed = (now - lastAt) / 1000
+            const speed = elapsed > 0 ? Math.max(0, (loaded - lastLoaded) / elapsed) : 0
+            if (now - lastAt < 250 && loaded !== total) return
+            lastLoaded = loaded
+            lastAt = now
+            this.updateLocalTask(id, {
+              status: 'running',
+              transferred: loaded,
+              file_size: total,
+              speed,
+            })
+          },
+        })
+        saveBlob(blob, task.file_name || '下载文件')
+        this.completeLocalTask(id, { file_size: blob.size || task.file_size || 0 })
+      } catch (err) {
+        const cancelled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError'
+        this.failLocalTask(id, cancelled ? '已取消' : (err.response?.data?.detail || '重试下载失败'))
+        throw err
+      } finally {
+        localTaskCancels.delete(id)
+      }
     },
 
     updateTaskProgress(payload) {

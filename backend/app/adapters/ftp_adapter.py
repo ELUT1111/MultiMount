@@ -36,7 +36,8 @@ class _AsyncChunkReader:
 
     def _fill_buf(self):
         try:
-            chunk = self._loop.run_until_complete(self._aiter.__anext__())
+            future = asyncio.run_coroutine_threadsafe(self._aiter.__anext__(), self._loop)
+            chunk = future.result()
             self._buf += chunk
         except StopAsyncIteration:
             self._done = True
@@ -71,8 +72,7 @@ class FTPAdapter(BaseAdapter):
             ftp = ftplib.FTP()
             ftp.connect(self._host, self._port, timeout=30)
             ftp.login(self._username, self._password)
-            if self._passive:
-                ftp.set_pasv(True)
+            ftp.set_pasv(self._passive)
             ftp.encoding = "utf-8"
             self._ftp = ftp
             return True

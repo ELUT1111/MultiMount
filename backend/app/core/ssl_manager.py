@@ -5,7 +5,9 @@ SSL/TLS 证书管理 — 证书上传、验证、存储、配置注入。
 """
 import json
 import logging
+import os
 import ssl
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
@@ -46,6 +48,31 @@ def save_config(config: SSLConfig):
     """持久化 SSL 配置到磁盘"""
     _ensure_dirs()
     CONFIG_FILE.write_text(json.dumps(asdict(config), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _arg_value(args: list[str], name: str) -> str:
+    for index, arg in enumerate(args):
+        if arg == name and index + 1 < len(args):
+            return args[index + 1]
+        prefix = name + "="
+        if arg.startswith(prefix):
+            return arg[len(prefix):]
+    return ""
+
+
+def runtime_ssl_paths(args: list[str] | None = None) -> dict:
+    """Return SSL files passed to uvicorn at process startup, if any."""
+    args = list(sys.argv if args is None else args)
+    return {
+        "cert_path": _arg_value(args, "--ssl-certfile") or os.getenv("MOUNTHUB_SSL_CERTFILE", ""),
+        "key_path": _arg_value(args, "--ssl-keyfile") or os.getenv("MOUNTHUB_SSL_KEYFILE", ""),
+    }
+
+
+def runtime_https_enabled(args: list[str] | None = None) -> bool:
+    """Whether the current backend process was started with runtime TLS files."""
+    paths = runtime_ssl_paths(args)
+    return bool(paths["cert_path"] and paths["key_path"])
 
 
 def validate_cert(cert_path: str) -> dict:

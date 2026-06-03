@@ -66,14 +66,29 @@
             <p>上传证书与私钥，并配置 HTTP 到 HTTPS 的访问策略。</p>
           </div>
           <el-card class="settings-card compact-card">
-            <div class="status-strip" :class="httpsConfig.cert_valid ? 'is-success' : 'is-danger'">
+            <div class="status-strip" :class="httpsStatusClass">
               <el-icon :size="22">
-                <component :is="httpsConfig.cert_valid ? CircleCheckFilled : CircleCloseFilled" />
+                <component :is="httpsConfig.https_active || httpsConfig.cert_valid ? CircleCheckFilled : CircleCloseFilled" />
               </el-icon>
               <div>
-                <strong>{{ httpsConfig.cert_valid ? '证书有效' : '证书未配置' }}</strong>
-                <span>{{ httpsConfig.cert_expiry ? `有效期至 ${httpsConfig.cert_expiry}` : '上传证书和私钥后启用 HTTPS' }}</span>
+                <strong>{{ httpsStatusTitle }}</strong>
+                <span>{{ httpsStatusText }}</span>
               </div>
+            </div>
+            <div class="https-meta">
+              <el-tag :type="httpsConfig.https_active ? 'success' : 'info'" effect="light">
+                当前访问: {{ httpsConfig.https_active ? 'HTTPS' : 'HTTP' }}
+              </el-tag>
+              <el-tag v-if="httpsConfig.runtime_https" type="success" effect="light">
+                运行时 HTTPS 已启用
+              </el-tag>
+              <el-tag v-if="httpsConfig.runtime_cert_path && !httpsConfig.managed_cert_path" type="warning" effect="light">
+                证书来自启动参数
+              </el-tag>
+            </div>
+            <div v-if="httpsConfig.cert_path || httpsConfig.key_path" class="cert-paths">
+              <div v-if="httpsConfig.cert_path"><span>证书</span><code>{{ httpsConfig.cert_path }}</code></div>
+              <div v-if="httpsConfig.key_path"><span>私钥</span><code>{{ httpsConfig.key_path }}</code></div>
             </div>
             <el-alert
               v-if="httpsConfig.cert_expiry_warning"
@@ -222,7 +237,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { CircleCheckFilled, CircleCloseFilled, UploadFilled, Download } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useMountsStore } from '@/stores/mounts'
@@ -245,11 +260,34 @@ const httpsConfig = reactive({
   cert_expiry: '',
   cert_days_remaining: null,
   cert_expiry_warning: false,
+  https_active: false,
+  runtime_https: false,
+  runtime_cert_valid: false,
+  runtime_cert_path: '',
+  runtime_key_path: '',
   force_https: false,
   auto_redirect: true,
   cert_path: '',
   key_path: '',
+  managed_cert_path: '',
+  managed_key_path: '',
   reverse_proxy: { nginx: [], caddy: [], notes: [] },
+})
+
+const httpsStatusClass = computed(() => (httpsConfig.https_active || httpsConfig.cert_valid ? 'is-success' : 'is-danger'))
+const httpsStatusTitle = computed(() => {
+  if (httpsConfig.https_active && httpsConfig.runtime_https) return 'HTTPS 运行中'
+  if (httpsConfig.https_active) return '当前连接为 HTTPS'
+  if (httpsConfig.cert_valid) return '证书有效'
+  return '证书未配置'
+})
+const httpsStatusText = computed(() => {
+  if (httpsConfig.cert_expiry) {
+    const source = httpsConfig.managed_cert_path ? '面板配置证书' : httpsConfig.runtime_cert_path ? '启动参数证书' : '证书'
+    return `${source}有效期至 ${httpsConfig.cert_expiry}`
+  }
+  if (httpsConfig.runtime_https) return '后端已通过启动参数启用 HTTPS，但证书有效期未能解析'
+  return '上传证书和私钥后启用 HTTPS，或使用 uvicorn SSL 参数启动'
 })
 
 async function fetchHttpsStatus() {
@@ -460,6 +498,36 @@ onMounted(async () => {
 .status-strip strong { font-size: 14px; color: var(--text-regular); }
 .status-strip span { color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .inline-alert { margin-top: 12px; }
+.https-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.cert-paths {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary-color) 4%, transparent);
+}
+.cert-paths div {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 12px;
+}
+.cert-paths span {
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+.cert-paths code {
+  color: var(--text-regular);
+  overflow-wrap: anywhere;
+}
 .upload-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 .switch-list { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
 .webdav-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

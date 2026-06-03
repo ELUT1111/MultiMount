@@ -45,6 +45,21 @@ async def _authorize_transfer(body: TransferCreateRequest, user, db: AsyncSessio
     raise HTTPException(status_code=400, detail="Unsupported transfer task type")
 
 
+async def _authorize_existing_task(task, user, db: AsyncSession) -> None:
+    body = TransferCreateRequest(
+        type=task.type,
+        mount_id=task.mount_id,
+        source_mount_id=task.source_mount_id,
+        target_mount_id=task.target_mount_id,
+        source_path=task.source_path,
+        target_path=task.target_path,
+        file_name=task.file_name,
+        file_size=task.file_size,
+        conflict_policy=task.conflict_policy,
+    )
+    await _authorize_transfer(body, user, db)
+
+
 @router.get("", response_model=list[TransferTaskOut])
 async def list_tasks(
     status: str | None = Query(None, description="Filter by status"),
@@ -125,14 +140,8 @@ async def retry_task(
     db: AsyncSession = Depends(get_db),
 ):
     task = await _get_owned_task(task_id, _user, db)
-    if task.status != "failed":
-        raise HTTPException(status_code=400, detail="Only failed tasks can be retried")
-    task.status = "pending"
-    task.transferred = 0
-    task.speed = 0
-    task.error_message = None
-    await db.commit()
-    return await transfer_service.resume_task(db, task_id)
+    await _authorize_existing_task(task, _user, db)
+    return await transfer_service.retry_task(db, task_id)
 
 
 @router.websocket("/ws")

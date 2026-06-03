@@ -24,14 +24,20 @@ class IPBlacklistMiddleware(BaseHTTPMiddleware):
 
 class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        from app.core.ssl_manager import load_config
+        from app.core.ssl_manager import load_config, runtime_https_enabled
 
         config = load_config()
         if not config.force_https or not config.auto_redirect:
             return await call_next(request)
 
+        if request.url.path == "/api/v1/system/https/redirect-policy":
+            return await call_next(request)
+
         proto = request.headers.get("x-forwarded-proto", request.url.scheme)
         if proto.lower() == "https":
+            return await call_next(request)
+
+        if not runtime_https_enabled():
             return await call_next(request)
 
         url = request.url.replace(scheme="https")

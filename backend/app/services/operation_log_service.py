@@ -3,6 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.operation_log import OperationLog
+from app.utils.datetime_utils import iso_utc
 
 
 def request_context(request: Request | None) -> tuple[str | None, str | None]:
@@ -100,7 +101,7 @@ async def list_operation_logs(
                 "ip_address": item.ip_address,
                 "user_agent": item.user_agent,
                 "detail": item.detail,
-                "created_at": item.created_at.isoformat() if item.created_at else None,
+                "created_at": iso_utc(item.created_at),
             }
             for item in items
         ],
