@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from wsgidav.dc.base_dc import BaseDomainController
 
 from app.config import get_settings
 from app.core.security import verify_password
@@ -28,14 +29,15 @@ def _run_async(coro):
         loop.close()
 
 
-class UserDomainController:
+class UserDomainController(BaseDomainController):
     """
     基于数据库用户的域控制器。
 
     wsgidav 通过此接口验证 WebDAV 客户端的 Basic Auth 凭证。
     """
 
-    def __init__(self):
+    def __init__(self, wsgidav_app=None, config=None):
+        super().__init__(wsgidav_app, config or {})
         settings = get_settings()
         self._engine = create_async_engine(settings.DATABASE_URL)
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
@@ -53,7 +55,7 @@ class UserDomainController:
                 return False
             return verify_password(password, user.hashed_password)
 
-    def get_domain_realm_name(self) -> str:
+    def get_domain_realm(self, path_info: str, environ: dict | None) -> str:
         """返回域名称 (显示在认证对话框中)"""
         return "MultiMount WebDAV"
 

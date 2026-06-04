@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -27,19 +28,26 @@ if TYPE_CHECKING:
     from app.adapters.base import BaseAdapter, FileInfo
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-_loop: asyncio.AbstractEventLoop | None = None
+_thread_state = threading.local()
 MOUNT_CACHE_TTL_SECONDS = 15
 
 
 def _get_loop() -> asyncio.AbstractEventLoop:
-    global _loop
-    if _loop is None or _loop.is_closed():
-        _loop = asyncio.new_event_loop()
-    return _loop
+    loop = getattr(_thread_state, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        _thread_state.loop = loop
+    return loop
 
 
 def _run_async(coro):
-    return _get_loop().run_until_complete(coro)
+    try:
+        return _get_loop().run_until_complete(coro)
+    except RuntimeError:
+        close = getattr(coro, "close", None)
+        if close is not None:
+            close()
+        raise
 
 
 @dataclass
@@ -310,6 +318,12 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
             return self._info.modified_at.timestamp()
         return time.time()
 
+    def support_etag(self) -> bool:
+        return False
+
+    def get_etag(self) -> str | None:
+        return None
+
     def get_display_info(self) -> dict:
         return {"type": "File"}
 
@@ -331,7 +345,7 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
 
         return io.BytesIO(b"".join(chunks))
 
-    def begin_write(self, content_type: str = None):
+    def begin_write(self, *, content_type: str = None):
         adapter_path = self._adapter_path()
         self._require("upload", adapter_path)
         return _WriteBuffer(self._adapter, adapter_path, self._context, self._mount_id)
@@ -419,7 +433,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
         self._session_factory = session_factory
         self._recycle_delete = recycle_delete
         self._root_mount_id = root_mount_id
-        self._mount_cache: dict[int, tuple[float, list[MountHandle]]] = {}
+        self._mount_cache: dict[tuple[int, int], tuple[float, list[MountHandle]]] = {}
 
     def get_resource_inst(self, path: str, environ: dict):
         user = self._user_from_environ(environ)
@@ -469,7 +483,8 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
 
     def _visible_mounts(self, user: User) -> list[MountHandle]:
         now = time.monotonic()
-        cached = self._mount_cache.get(user.id)
+        cache_key = (threading.get_ident(), user.id)
+        cached = self._mount_cache.get(cache_key)
         if cached and now - cached[0] < MOUNT_CACHE_TTL_SECONDS:
             return cached[1]
 
@@ -509,7 +524,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
                 return handles
 
         handles = _run_async(_load())
-        self._mount_cache[user.id] = (now, handles)
+        self._mount_cache[cache_key] = (now, handles)
         return handles
 
     def _mount_for_name(self, user: User, safe_name: str) -> MountHandle | None:

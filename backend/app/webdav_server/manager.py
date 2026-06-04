@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import ssl
 import threading
 from dataclasses import dataclass
 
@@ -59,6 +60,7 @@ class WebDAVManager:
         self._server_thread: threading.Thread | None = None
         self._server = None
         self._running = False
+        self._startup_event = threading.Event()
         self._config = WebDAVConfig()
         self._domain_controller: UserDomainController | None = None
         self._error: str | None = None
@@ -94,7 +96,6 @@ class WebDAVManager:
                 recycle_delete=self._config.recycle_delete,
                 root_mount_id=self._config.root_mount_id,
             )
-            self._domain_controller = UserDomainController()
             wsgidav_config = self._build_wsgidav_config(provider)
 
             self._server_thread = threading.Thread(
@@ -103,9 +104,19 @@ class WebDAVManager:
                 daemon=True,
                 name="webdav-server",
             )
+            self._startup_event.clear()
             self._server_thread.start()
-            self._running = True
-            self._error = None
+
+            if not self._startup_event.wait(timeout=3):
+                self._error = self._error or "WebDAV 服务启动超时"
+                self._running = False
+                logger.error("WebDAV service failed to start: %s", self._error)
+                return self.status
+
+            if not self._running:
+                logger.error("WebDAV service failed to start: %s", self._error)
+                return self.status
+
             self._mount_count = await self._count_served_mounts(db)
             logger.info("WebDAV service started on %s:%s", self._config.host, self._config.port)
         except Exception as exc:
@@ -149,17 +160,18 @@ class WebDAVManager:
             "host": self._config.host,
             "port": self._config.port,
             "provider_mapping": {"/": provider},
-            "domaincontroller": self._domain_controller,
+            "http_authenticator": {
+                "domain_controller": UserDomainController,
+                "accept_basic": True,
+                "accept_digest": False,
+                "default_to_digest": False,
+            },
             "verbose": 1 if self._config.access_log else 0,
             "logging": {
                 "enable": self._config.access_log,
-                "verbose": 1,
             },
             "accept_anonymous": False,
-            "lock_manager": True,
-            "response_headers": {
-                "Server": "MountHub WebDAV",
-            },
+            "lock_storage": True,
         }
 
         if self._config.ssl and self._config.ssl_cert_path:
@@ -184,6 +196,8 @@ class WebDAVManager:
             from wsgidav.wsgidav_app import WsgiDAVApp
 
             app = WsgiDAVApp(wsgidav_config)
+            if app.http_authenticator:
+                self._domain_controller = app.http_authenticator.get_domain_controller()
             if self._config.access_log:
                 app = AccessLogMiddleware(app, self._config.log_path)
             self._server = cheroot_wsgi.Server(
@@ -197,17 +211,24 @@ class WebDAVManager:
                     wsgidav_config.get("ssl_private_key"),
                 )
 
+            self._running = True
+            self._error = None
+            self._startup_event.set()
             self._server.start()
         except Exception as exc:
             self._error = str(exc)
             self._running = False
+            self._startup_event.set()
             logger.error("WebDAV server thread failed: %s", exc)
 
 
 def _create_ssl_adapter(cert_path: str, key_path: str | None):
     try:
         from cheroot.ssl.builtin import BuiltinSSLAdapter
-        return BuiltinSSLAdapter(cert_path, key_path)
+        adapter = BuiltinSSLAdapter(cert_path, key_path)
+        adapter.context.verify_mode = ssl.CERT_NONE
+        adapter.context.check_hostname = False
+        return adapter
     except ImportError:
         logger.warning("Cheroot SSL adapter is unavailable; WebDAV will keep using HTTP")
         return None
