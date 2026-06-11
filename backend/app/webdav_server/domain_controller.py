@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 def _run_async(coro):
     """在同步上下文中运行异步协程"""
+    # 域认证回调来自 WsgiDAV 同步接口，使用短生命周期 event loop 查询数据库。
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)
@@ -39,6 +40,7 @@ class UserDomainController(BaseDomainController):
     def __init__(self, wsgidav_app=None, config=None):
         super().__init__(wsgidav_app, config or {})
         settings = get_settings()
+        # WebDAV 服务线程不复用 FastAPI 请求会话，独立创建 engine/session_factory。
         self._engine = create_async_engine(settings.DATABASE_URL)
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
@@ -89,6 +91,7 @@ class UserDomainController(BaseDomainController):
 
     def supports_http_digest_auth(self) -> bool:
         """不支持 Digest Auth, 仅使用 Basic Auth"""
+        # Digest 需要额外的密码摘要存储策略；当前复用现有 bcrypt 密码校验，因此只启用 Basic。
         return False
 
     def close(self):

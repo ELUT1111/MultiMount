@@ -58,6 +58,7 @@ def is_expired(expires_at: datetime | None, now: datetime | None = None) -> bool
 
 
 def _snapshot_key(mount_id: int, file_path: str) -> str:
+    # 快照 key 由挂载 ID + 规范化路径确定，同一源文件的多个分享可复用同一份本地快照。
     source = f"{mount_id}:{normalize_path(file_path)}"
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
@@ -72,6 +73,7 @@ def _snapshot_abs_path(relative_path: str | None) -> Path | None:
     root = SNAPSHOT_ROOT.resolve()
     target = (root / relative_path).resolve()
     try:
+        # 所有快照路径必须限制在 SNAPSHOT_ROOT 内，防止构造 snapshot_path 读取任意本地文件。
         target.relative_to(root)
     except ValueError:
         raise BadRequestException("分享快照路径无效")
@@ -103,6 +105,7 @@ def _safe_snapshot_child(root: Path, path: str) -> Path:
     cleaned = normalize_path(path).lstrip("/")
     target = (root / cleaned).resolve()
     try:
+        # 分享目录浏览同样要做路径边界检查，避免通过 ../ 跳出当前快照目录。
         target.relative_to(root.resolve())
     except ValueError:
         raise BadRequestException("分享目录路径无效")
@@ -135,6 +138,7 @@ async def create_snapshot(db: AsyncSession, mount_id: int, file_path: str) -> di
 
     total_size = 0
     try:
+        # 先写入临时目录，全部复制成功后再替换正式快照，避免分享链接读到半成品。
         if info.is_dir:
             staging_content.mkdir(parents=True, exist_ok=True)
 
@@ -218,6 +222,7 @@ async def reusable_snapshot(db: AsyncSession, mount_id: int, file_path: str) -> 
     )
     now = utc_now()
     for link in result.scalars().all():
+        # 只有仍然有效、且快照文件真实存在的分享才可复用。
         if link.mount_id != mount_id:
             continue
         if normalize_path(link.file_path) != normalized_path:
@@ -313,6 +318,7 @@ async def release_snapshot(db: AsyncSession, link: ShareLink, *, deactivate: boo
     if deactivate:
         link.is_active = False
     if snapshot_path and not await snapshot_has_references(db, snapshot_path, link):
+        # 没有其他链接引用同一快照时才删除本地文件，避免批量分享互相影响。
         delete_snapshot_path(snapshot_path)
 
 
@@ -359,6 +365,7 @@ async def refresh_share_group(db: AsyncSession, links: list[ShareLink]) -> bool:
         return True
     source = links[0]
     try:
+        # 同一源路径的一组分享只重建一次快照，然后把元数据同步到所有链接。
         snapshot = await create_snapshot(db, source.mount_id, source.file_path)
     except NotFoundException:
         for link in links:
@@ -375,6 +382,7 @@ async def refresh_share_group(db: AsyncSession, links: list[ShareLink]) -> bool:
 async def handle_source_changed(db: AsyncSession, mount_id: int, path: str) -> dict:
     """Refresh active snapshots affected by a source file or directory update."""
     changed = normalize_path(path)
+    # 上传、复制、mkdir 后刷新受影响的活跃快照；目录分享在子项变化时也要刷新。
     result = await db.execute(
         select(ShareLink)
         .where(ShareLink.mount_id == mount_id)
@@ -400,6 +408,7 @@ async def handle_source_changed(db: AsyncSession, mount_id: int, path: str) -> d
 async def handle_source_deleted(db: AsyncSession, mount_id: int, path: str) -> dict:
     """Delete snapshots whose source path was removed and deactivate their links."""
     removed = normalize_path(path)
+    # 删除命中分享根路径时停用链接；删除目录分享内的子文件时刷新该目录快照。
     result = await db.execute(
         select(ShareLink)
         .where(ShareLink.mount_id == mount_id)
@@ -430,6 +439,7 @@ async def handle_source_deleted(db: AsyncSession, mount_id: int, path: str) -> d
 
 async def handle_source_moved(db: AsyncSession, mount_id: int, src: str, dst: str) -> dict:
     """Treat source moves as deletion of shares rooted at src and refresh affected parents."""
+    # 移动操作会同时影响源路径父目录和目标路径父目录，因此拆成 changed/deleted/changed 三步处理。
     source_changed = await handle_source_changed(db, mount_id, src)
     deleted = await handle_source_deleted(db, mount_id, src)
     target_changed = await handle_source_changed(db, mount_id, dst)
@@ -490,6 +500,7 @@ def _generate_token() -> str:
 def _verify_access_code(stored_code: str, provided_code: str) -> bool:
     """验证提取码。兼容历史明文提取码，新提取码使用哈希。"""
     if stored_code.startswith("hmac_sha256$"):
+        # 哈希提取码使用常量时间比较，避免泄露部分匹配信息。
         return hmac.compare_digest(stored_code, _hash_access_code(provided_code))
     return stored_code == provided_code
 
@@ -765,6 +776,7 @@ async def list_all_links(db: AsyncSession) -> list[ShareLink]:
 
 async def list_visible_links(db: AsyncSession, user) -> list[ShareLink]:
     """按当前用户身份列出可在分享管理面板中看到的分享链接。"""
+    # 可见性规则: 普通用户只看自己；普通管理员看普通用户和自己；超级管理员看全部。
     if is_super_admin(user):
         return await list_all_links(db)
 

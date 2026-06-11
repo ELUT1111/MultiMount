@@ -6,6 +6,9 @@ from app.services.mount_permission_service import check_mount_access
 
 
 FILE_ACTION_POLICIES = {
+    # 每个文件动作同时受两层限制:
+    # 1. 角色全局权限，例如 can_download/can_upload；
+    # 2. 具体挂载点权限，例如 read/readwrite。
     "list": ("can_download", "read"),
     "info": ("can_download", "read"),
     "download": ("can_download", "read"),
@@ -49,5 +52,7 @@ async def enforce_file_policy(db: AsyncSession, user, mount_id: int, action: str
     except KeyError:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="未知文件权限策略")
 
+    # 先检查“能否做这类动作”，再检查“能否访问这个挂载点”。
+    # 这样角色权限面板可以统一关闭上传/删除等能力，即使用户对某挂载有读写授权。
     check_role_permission(user, role_permission)
     return await check_mount_access(db, mount_id, user, mount_level)

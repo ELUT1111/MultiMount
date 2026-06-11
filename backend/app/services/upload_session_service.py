@@ -15,6 +15,7 @@ SESSIONS_DIR = Path("data/upload_sessions")
 
 
 def _session_dir(upload_id: str) -> Path:
+    # 每个分片上传会话独占一个目录，内部保存 meta.json 和若干 .part 文件。
     return SESSIONS_DIR / upload_id
 
 
@@ -34,6 +35,7 @@ async def init_session(
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     directory.mkdir(parents=True, exist_ok=False)
     metadata = {
+        # mount_id/user_id 写入元数据，用于后续分片上传和完成操作的归属校验。
         "filename": safe_name,
         "path": target_dir,
         "size": size,
@@ -59,6 +61,7 @@ async def _load_metadata(upload_id: str) -> dict:
 async def _load_authorized_metadata(upload_id: str, mount_id: int,
                                     user_id: int | None) -> dict:
     metadata = await _load_metadata(upload_id)
+    # 防止用户猜测 upload_id 后向其他人的挂载点会话追加分片或完成上传。
     if metadata.get("mount_id") != mount_id or metadata.get("user_id") != user_id:
         raise NotFoundException("上传会话不存在")
     return metadata
@@ -81,6 +84,7 @@ async def save_chunk(upload_id: str, index: int, data: AsyncIterator[bytes],
     directory = _session_dir(upload_id)
     chunk_path = directory / f"{index}.part"
     written = 0
+    # 分片可乱序上传；完成时再按 index 顺序读取并拼接。
     async with aiofiles.open(chunk_path, "wb") as f:
         async for chunk in data:
             written += len(chunk)
@@ -106,6 +110,7 @@ async def complete_session(db: AsyncSession, mount_id: int, upload_id: str,
     target_path = metadata["path"].rstrip("/") + "/" + metadata["filename"]
 
     async def iter_chunks():
+        # 完成上传时不把所有分片一次性读入内存，而是按顺序流式交给 file_service.upload_file。
         for i in range(expected_chunks):
             async with aiofiles.open(directory / f"{i}.part", "rb") as f:
                 while chunk := await f.read(1024 * 1024):
@@ -121,6 +126,7 @@ async def complete_session(db: AsyncSession, mount_id: int, upload_id: str,
             conflict_policy=metadata.get("conflict_policy", "error"),
         )
     finally:
+        # 无论目标上传成功还是失败，都清理临时会话目录，避免磁盘堆积。
         await abort_session(upload_id, mount_id, user_id)
     return info
 

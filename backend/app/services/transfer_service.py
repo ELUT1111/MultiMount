@@ -95,6 +95,7 @@ async def broadcast_progress(task: TransferTask):
 
 def _dispatch_scheduler() -> None:
     try:
+        # 调度器是“被动唤醒”的：创建、暂停、恢复、重试、取消任务后都会触发一次。
         asyncio.create_task(schedule_transfers())
     except RuntimeError:
         logger.debug("transfer scheduler dispatch skipped: no running loop")
@@ -135,6 +136,7 @@ async def _resolve_task_limits(
     source_qos = await _load_mount_qos(db, source_mount_id)
     target_qos = await _load_mount_qos(db, target_mount_id)
 
+    # 多个限速来源同时存在时取最小值，保证全局默认、角色限制和挂载限制都能生效。
     download_candidates = [
         _limit_bps(settings.TRANSFER_DEFAULT_DOWNLOAD_LIMIT_KBPS),
         _limit_bps(download_limit_kbps),
@@ -173,6 +175,7 @@ async def _mount_running_count(db: AsyncSession, mount_id: int) -> int:
 
 async def _can_start_task(db: AsyncSession, task: TransferTask) -> bool:
     settings = get_settings()
+    # 并发限制分三层: 全局、用户、挂载点。任意一层达到上限都保持 queued。
     if await _running_count(db) >= settings.TRANSFER_MAX_CONCURRENT_GLOBAL:
         return False
 
@@ -198,6 +201,7 @@ async def schedule_transfers() -> None:
     from app.database import async_session_factory
 
     async with _scheduler_lock:
+        # 清理已结束的 asyncio.Task，避免内存中的运行表和数据库状态长期不一致。
         for task_id, runner in list(_running_tasks.items()):
             if runner.done():
                 _running_tasks.pop(task_id, None)
@@ -214,6 +218,7 @@ async def schedule_transfers() -> None:
                 if not await _can_start_task(db, task):
                     continue
 
+                # 数据库先置为 running，再启动后台协程；前端任务面板可立即看到状态变化。
                 task.status = "running"
                 task.speed = 0
                 task.error_message = None
@@ -268,6 +273,7 @@ async def create_task(
     if not source_mount_id or not target_mount_id:
         raise BadRequestException("跨挂载传输需要 source_mount_id 和 target_mount_id")
 
+    # 将 KB/s 配置转换为 B/s 后固化到任务上，避免任务执行期间角色或挂载配置变更影响已创建任务。
     download_limit_bps, upload_limit_bps = await _resolve_task_limits(
         db,
         user_id,
@@ -366,6 +372,7 @@ async def recover_unfinished_tasks() -> int:
         )
         tasks = list(result.scalars().all())
         for task in tasks:
+            # 服务重启后无法继续持有旧的适配器连接，因此统一回到 queued 重新执行。
             task.status = "queued"
             task.speed = 0
             checkpoint = dict(task.checkpoint or {})
@@ -474,6 +481,7 @@ async def _execute_mount_transfer(db: AsyncSession, task: TransferTask) -> None:
 
     try:
         if source_mount_id == target_mount_id:
+            # 同一挂载内移动/复制优先调用适配器原生命令，避免把文件下载再上传一遍。
             if task.type == "copy":
                 await source_adapter.copy(source_path, final_target_path)
             else:
@@ -493,6 +501,7 @@ async def _execute_mount_transfer(db: AsyncSession, task: TransferTask) -> None:
             return
 
         if source_info.is_dir:
+            # 跨挂载目录传输按目录树递归复制，完成后 move 再删除源目录。
             await _transfer_directory_tree(
                 db,
                 task,
@@ -503,6 +512,7 @@ async def _execute_mount_transfer(db: AsyncSession, task: TransferTask) -> None:
                 target_adapter,
             )
         else:
+            # 跨挂载单文件传输采用“下载异步迭代器 -> 上传异步迭代器”的流式桥接。
             await _transfer_single_file(
                 db,
                 task,
@@ -550,6 +560,7 @@ async def _transfer_directory_tree(
         for info in await file_service.list_dir(db, source_mount_id, current_source):
             target_path = normalize_path(current_target.rstrip("/") + "/" + info.name)
             checkpoint = dict(task.checkpoint or {})
+            # checkpoint 主要用于前端展示当前处理文件和失败后诊断，不做断点续传恢复。
             checkpoint["current_source_path"] = info.path
             checkpoint["current_target_path"] = target_path
             checkpoint["current_file_transferred"] = 0
@@ -608,6 +619,7 @@ async def _download_with_progress(db: AsyncSession, task: TransferTask,
 
     async for chunk in chunks:
         await db.refresh(task)
+        # 暂停/取消不是直接 kill 协程，而是在流式迭代点检查任务状态并抛出内部异常。
         if task.status in ("paused", "failed"):
             task.speed = 0
             await db.commit()
@@ -622,6 +634,7 @@ async def _download_with_progress(db: AsyncSession, task: TransferTask,
         task.checkpoint = checkpoint
 
         if limit:
+            # 简单令牌桶式限速: 根据已传字节和目标速率计算理论耗时，不足则 sleep。
             elapsed = time.monotonic() - window_started
             expected = window_bytes / limit
             if expected > elapsed:
@@ -632,6 +645,7 @@ async def _download_with_progress(db: AsyncSession, task: TransferTask,
 
         now = time.monotonic()
         if now - last_time >= 0.5:
+            # 传输速度和进度每 0.5 秒左右落库并通过 WebSocket 推送给任务面板。
             task.speed = (task.transferred - last_transferred) / (now - last_time)
             last_time = now
             last_transferred = task.transferred

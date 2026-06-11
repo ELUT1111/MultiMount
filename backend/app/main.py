@@ -28,6 +28,7 @@ async def _search_index_refresh_loop(logger) -> None:
     while True:
         await asyncio.sleep(interval)
         try:
+            # 索引刷新可能递归扫描远端挂载，耗时不可控；用锁避免任务堆积。
             if refresh_lock.locked():
                 logger.warning("上一次搜索索引刷新仍在运行，跳过本轮")
                 continue
@@ -54,6 +55,7 @@ async def _share_snapshot_sync_loop(logger) -> None:
     while True:
         await asyncio.sleep(interval)
         try:
+            # 分享快照同步会读写本地快照目录，串行执行可以避免同一快照被并发替换。
             if sync_lock.locked():
                 logger.warning("上一次分享快照同步仍在运行，跳过本轮")
                 continue
@@ -106,8 +108,10 @@ async def lifespan(_app: FastAPI):
     from app.database import async_session_factory
 
     async with async_session_factory() as db:
+        # 角色和默认 admin 用户只在缺失时创建；已有角色权限不会被启动流程覆盖。
         await seed_default_roles(db)
         await seed_admin_user(db)
+        # 启动时清理过期分享快照，避免长期运行后本地快照目录无限增长。
         from app.services.share_service import cleanup_expired_snapshots
         await cleanup_expired_snapshots(db)
         await db.commit()
@@ -118,6 +122,7 @@ async def lifespan(_app: FastAPI):
     if recovered:
         logger.info("已恢复 %d 个未完成传输任务", recovered)
 
+    # 后台任务只负责维护派生数据；主业务接口仍以挂载适配器和数据库为准。
     search_index_task = asyncio.create_task(_search_index_refresh_loop(logger))
     share_snapshot_task = asyncio.create_task(_share_snapshot_sync_loop(logger))
 
@@ -132,6 +137,7 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        # FastAPI 关闭时显式取消后台循环，避免 reload 或退出时悬挂任务。
         for task in (search_index_task, share_snapshot_task):
             task.cancel()
             try:

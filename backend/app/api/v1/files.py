@@ -42,6 +42,8 @@ from app.utils.path_utils import normalize_path, safe_upload_filename
 router = APIRouter()
 download_security_scheme = HTTPBearer()
 CREATOR_SOURCE_ACTIONS = {
+    # 文件“创建者”不存放在远端文件系统元数据里，而是从本系统操作日志反推。
+    # 因此只有通过 MountHub 上传、复制或 WebDAV 创建的文件能稳定显示创建者。
     "file_upload",
     "file_multipart_upload",
     "file_mkdir",
@@ -77,6 +79,7 @@ async def _creator_map_for_paths(
     if not normalized_paths:
         return {}
     match_paths = set(normalized_paths)
+    # 历史日志中存在双斜杠路径写法，这里同时兼容新旧格式。
     match_paths.update(f"//{path.lstrip('/')}" for path in normalized_paths if path != "/")
 
     result = await db.execute(
@@ -100,6 +103,7 @@ async def _creator_map_for_paths(
 
     creators: dict[str, dict] = {}
     for user_id, username, path, target_path, action in result.all():
+        # 复制操作的创建结果在 target_path，其它创建类动作以 path 为准。
         source_path = target_path if action in {"file_copy", "webdav.copy"} else path
         if not source_path:
             continue
@@ -129,6 +133,7 @@ def _parse_range_header(range_header: str | None, size: int | None) -> tuple[int
 
     start_text, _, end_text = range_header[6:].partition("-")
     try:
+        # 支持 bytes=100-200、bytes=100-、bytes=-500 三种常见 Range 写法。
         if start_text:
             start = int(start_text)
             end = int(end_text) if end_text else size - 1
@@ -147,6 +152,7 @@ def _parse_range_header(range_header: str | None, size: int | None) -> tuple[int
 
 
 async def _get_download_user(credentials: HTTPAuthorizationCredentials, db: AsyncSession) -> User:
+    # 下载接口使用独立 bearer 依赖，便于 StreamingResponse 在进入流式响应前完成认证。
     payload = decode_token(credentials.credentials)
     if payload is None or payload.get("type") != "access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的访问令牌")

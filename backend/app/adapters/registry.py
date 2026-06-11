@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 class AdapterRegistry:
     """适配器工厂 — 根据挂载类型创建对应适配器实例"""
 
+    # 注册表由各协议适配器上的 @AdapterRegistry.register(...) 填充。
+    # 因此调用 create 前要确保 app.adapters 包已被导入，触发所有适配器模块加载。
     _registry: dict[str, type[BaseAdapter]] = {}
 
     @classmethod
@@ -25,6 +27,7 @@ class AdapterRegistry:
         adapter_cls = cls._registry.get(mount_type)
         if not adapter_cls:
             raise ValueError(f"不支持的挂载类型: {mount_type}")
+        # config 来自挂载记录，已经在 mount_service 中完成敏感字段解密。
         return adapter_cls(**config)
 
     @classmethod

@@ -11,6 +11,8 @@ engine = create_async_engine(
     future=True,
 )
 
+# 全局异步会话工厂。expire_on_commit=False 可以避免提交后 ORM 对象属性被清空，
+# 便于 API 层在事务提交后继续序列化响应对象。
 async_session_factory = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -29,6 +31,8 @@ async def init_db():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # 这里保留轻量级“补列”逻辑，便于旧 SQLite 数据库随版本启动时自动追平。
+        # 生产环境若接入正式数据库，仍应优先使用 Alembic 迁移来管理表结构。
         # 增量迁移: 为 notifications 表添加 metadata 列 (如不存在)
         try:
             await conn.execute(sa.text("ALTER TABLE notifications ADD COLUMN metadata JSON"))
@@ -95,6 +99,7 @@ async def get_db() -> AsyncSession:
         try:
             yield session
             await session.commit()
+            # WebSocket 推送要等数据库提交成功后再发送，避免前端收到实际未落库的消息。
             await notification_service.flush_queued_pushes(session)
         except Exception:
             await session.rollback()

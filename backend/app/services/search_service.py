@@ -34,6 +34,7 @@ OFFICE_EXTS = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods"
 
 
 def classify_file(name: str, mime_type: str | None, is_dir: bool) -> tuple[str, str]:
+    # 文件类型优先用 MIME 判断，缺失或不可靠时回退到扩展名。
     if is_dir:
         return "directory", ""
     ext = PurePosixPath(name).suffix.lower()
@@ -96,6 +97,7 @@ async def refresh_index(
     mount_ids: list[int] | None = None,
     max_depth: int = 10,
 ) -> dict:
+    # 手动刷新只处理当前用户可访问的挂载，避免通过索引接口探测不可见挂载。
     accessible = await get_accessible_mount_ids(db, user)
     if mount_ids:
         accessible &= set(mount_ids)
@@ -113,6 +115,7 @@ async def refresh_index(
     total = 0
     now = datetime.now(timezone.utc)
     for mount in mounts:
+        # 全量刷新采用先删后建，保证已删除文件不会残留在搜索结果里。
         await db.execute(delete(FileIndex).where(FileIndex.mount_id == mount.id))
         await db.flush()
         try:
@@ -183,6 +186,7 @@ async def _index_mount_tree(
         except Exception:
             return
         for item in items:
+            # 回收站是内部目录，不应进入全局搜索索引。
             if is_trash_path(item.path):
                 continue
             file_type, extension = classify_file(item.name, item.mime_type, item.is_dir)
@@ -220,6 +224,7 @@ async def refresh_path_index(
     """Incrementally refresh one path and its children in the search index."""
     normalized = normalize_path(path)
     prefix = normalized.rstrip("/") + "/"
+    # 增量刷新先删除目标路径及其子路径旧索引，再按当前文件系统状态重建。
     await db.execute(
         delete(FileIndex).where(
             FileIndex.mount_id == mount_id,
@@ -331,6 +336,7 @@ async def search_files(
 
     indexed_count = await db.scalar(select(func.count(FileIndex.id)).where(FileIndex.mount_id.in_(accessible)))
     if indexed_count:
+        # 只要可访问挂载已有索引，就优先使用数据库索引，速度更快且支持复杂过滤。
         return await _search_index(
             db,
             matcher,
@@ -348,6 +354,7 @@ async def search_files(
             owner,
         )
 
+    # 未建立索引时回退到实时递归搜索，牺牲速度换取首次使用可用。
     return await _search_live(db, user, matcher, accessible, max_depth, limit)
 
 
@@ -396,6 +403,7 @@ async def _search_index(
     result = await db.execute(stmt)
     rows = list(result.scalars().all())
     if use_regex:
+        # SQLite 不直接使用 Python 正则；正则搜索先放宽取样，再在内存里做精确匹配。
         rows = [row for row in rows if matcher(row.name) or matcher(row.path)][:limit]
     return [_row_to_result(row) for row in rows[:limit]]
 
@@ -421,6 +429,7 @@ async def _search_live(
         if len(results) >= limit:
             break
         try:
+            # 实时搜索逐个连接挂载，单个挂载失败不影响其他挂载结果。
             _, adapter = await get_adapter_for_mount(db, mount.id)
             await adapter.connect()
             await _recursive_search(

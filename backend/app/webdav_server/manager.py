@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WebDAVConfig:
+    # WebDAV 服务运行配置，由系统设置面板保存/传入。
+    # root_mount_id 不为空时，只暴露指定挂载点；为空时根目录列出所有可见挂载。
     host: str = "0.0.0.0"
     port: int = 8080
     ssl: bool = False
@@ -30,6 +32,7 @@ class WebDAVConfig:
 
 @dataclass
 class WebDAVStatus:
+    # 返回给前端的运行状态快照，不直接暴露 cheroot Server 对象。
     running: bool = False
     host: str = "0.0.0.0"
     port: int = 8080
@@ -45,6 +48,7 @@ class WebDAVStatus:
 
 
 class WebDAVManager:
+    # WebDAV 服务在进程内只能有一个监听实例，因此管理器实现为单例。
     _instance: "WebDAVManager | None" = None
 
     def __new__(cls):
@@ -57,6 +61,7 @@ class WebDAVManager:
         if self._initialized:
             return
         self._initialized = True
+        # cheroot Server 是同步阻塞服务，必须放在独立线程中运行。
         self._server_thread: threading.Thread | None = None
         self._server = None
         self._running = False
@@ -85,12 +90,14 @@ class WebDAVManager:
 
     async def start(self, db: AsyncSession, config: WebDAVConfig | None = None) -> WebDAVStatus:
         if self._running:
+            # 重复启动直接返回当前状态，避免重复绑定端口。
             return self.status
 
         if config:
             self._config = config
 
         try:
+            # Provider 负责把 WebDAV 路径映射到 MountHub 挂载适配器。
             provider = MultiMountDAVProvider(
                 async_session_factory,
                 recycle_delete=self._config.recycle_delete,
@@ -107,6 +114,7 @@ class WebDAVManager:
             self._startup_event.clear()
             self._server_thread.start()
 
+            # WebDAV 服务在独立线程中启动；这里等待线程明确成功/失败，避免 UI 显示假运行。
             if not self._startup_event.wait(timeout=3):
                 self._error = self._error or "WebDAV 服务启动超时"
                 self._running = False
@@ -132,6 +140,7 @@ class WebDAVManager:
 
         try:
             if self._server:
+                # stop 会让 cheroot.start() 退出，随后服务线程自然结束。
                 self._server.stop()
             self._running = False
             self._error = None
@@ -152,6 +161,7 @@ class WebDAVManager:
             await self.stop()
         self._config = config
         if was_running:
+            # 配置更新采用停再启，保证端口、SSL、根挂载等 cheroot 级配置真正生效。
             return await self.start(db, config)
         return self.status
 
@@ -159,9 +169,11 @@ class WebDAVManager:
         config = {
             "host": self._config.host,
             "port": self._config.port,
+            # 所有 WebDAV 请求先进入根 provider，再由 provider 解析挂载名和内部路径。
             "provider_mapping": {"/": provider},
             "http_authenticator": {
                 "domain_controller": UserDomainController,
+                # Windows 资源管理器对 Basic Auth 兼容性最好；Digest 当前未启用。
                 "accept_basic": True,
                 "accept_digest": False,
                 "default_to_digest": False,
@@ -171,10 +183,12 @@ class WebDAVManager:
                 "enable": self._config.access_log,
             },
             "accept_anonymous": False,
+            # True 表示使用 WsgiDAV 默认锁存储，支持 Windows 客户端的 LOCK/UNLOCK 请求。
             "lock_storage": True,
         }
 
         if self._config.ssl and self._config.ssl_cert_path:
+            # WebDAV TLS 独立于 FastAPI/uvicorn HTTPS；两者需要分别配置证书。
             config["ssl_certificate"] = self._config.ssl_cert_path
             config["ssl_private_key"] = self._config.ssl_key_path
 
@@ -195,6 +209,7 @@ class WebDAVManager:
             from cheroot import wsgi as cheroot_wsgi
             from wsgidav.wsgidav_app import WsgiDAVApp
 
+            # WsgiDAVApp 是标准 WSGI 应用，cheroot 负责实际 socket 监听。
             app = WsgiDAVApp(wsgidav_config)
             if app.http_authenticator:
                 self._domain_controller = app.http_authenticator.get_domain_controller()
@@ -226,6 +241,7 @@ def _create_ssl_adapter(cert_path: str, key_path: str | None):
     try:
         from cheroot.ssl.builtin import BuiltinSSLAdapter
         adapter = BuiltinSSLAdapter(cert_path, key_path)
+        # WebDAV HTTPS 只使用服务端证书，不要求 Windows 客户端选择个人证书。
         adapter.context.verify_mode = ssl.CERT_NONE
         adapter.context.check_hostname = False
         return adapter

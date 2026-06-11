@@ -26,16 +26,19 @@ async def check_mount_access(db: AsyncSession, mount_id: int, user, required_lev
     required = LEVELS.get(required_level, 1)
 
     # 1. 管理员 → 全部权限
+    # 注意: is_admin 同时包含 super_admin，管理员天然绕过具体挂载授权。
     if is_admin(user):
         return "readwrite"
 
     # 2. 挂载所有者 → 全部权限
+    # 所有者权限只针对自己创建的挂载点，不影响角色全局动作权限。
     mount_result = await db.execute(select(Mount.user_id).where(Mount.id == mount_id))
     row = mount_result.first()
     if row and row[0] == user.id:
         return "readwrite"
 
     # 3. 用户级权限 (mount_permissions 表)
+    # 用户级授权优先于角色级授权，适合给单个用户临时开放某个挂载点。
     perm_result = await db.execute(
         select(MountPermission.level)
         .where(MountPermission.mount_id == mount_id)
@@ -48,6 +51,7 @@ async def check_mount_access(db: AsyncSession, mount_id: int, user, required_lev
             return perm_row[0]
 
     # 4. 角色级权限 (role.mount_permissions JSON)
+    # 角色级授权是用户组默认挂载可见性，JSON key 兼容 int 和 str 两种历史写法。
     role = user.role
     if role and role.mount_permissions:
         mount_perms = role.mount_permissions
@@ -116,6 +120,7 @@ async def get_accessible_mount_ids(db: AsyncSession, user) -> set[int]:
     ids = set()
 
     # 管理员 → 全部挂载
+    # 这里决定列表可见性；具体动作仍会经过 core.policy 的全局动作权限判断。
     if is_admin(user):
         result = await db.execute(select(Mount.id))
         return {row[0] for row in result.all()}
@@ -137,6 +142,7 @@ async def get_accessible_mount_ids(db: AsyncSession, user) -> set[int]:
         for k, v in user.role.mount_permissions.items():
             if v in ("read", "readwrite"):
                 try:
+                    # JSON 对象的 key 会被序列化为字符串，读取时统一转回挂载 ID。
                     ids.add(int(k))
                 except (ValueError, TypeError):
                     pass
@@ -168,6 +174,7 @@ async def request_access(db: AsyncSession, mount_id: int, user_id: int,
     )
     for row in pending_result.all():
         meta = row[0] or {}
+        # 同一用户对同一挂载的未处理申请只保留一条，避免通知面板被重复申请刷屏。
         if meta.get("requester_id") == user_id and not meta.get("action_status"):
             raise HTTPException(status_code=409, detail="已存在待处理的权限申请，请等待审批")
 

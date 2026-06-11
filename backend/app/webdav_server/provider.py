@@ -33,6 +33,8 @@ MOUNT_CACHE_TTL_SECONDS = 15
 
 
 def _get_loop() -> asyncio.AbstractEventLoop:
+    # WsgiDAV/cheroot 用多线程同步模型处理请求；每个线程独立 event loop，
+    # 避免多个线程同时 run_until_complete 同一个 loop。
     loop = getattr(_thread_state, "loop", None)
     if loop is None or loop.is_closed():
         loop = asyncio.new_event_loop()
@@ -44,6 +46,7 @@ def _run_async(coro):
     try:
         return _get_loop().run_until_complete(coro)
     except RuntimeError:
+        # 如果协程还没被 loop 接管就失败，主动 close 避免 RuntimeWarning。
         close = getattr(coro, "close", None)
         if close is not None:
             close()
@@ -52,6 +55,7 @@ def _run_async(coro):
 
 @dataclass
 class MountHandle:
+    # WebDAV 请求处理期间使用的挂载句柄，缓存了已创建并连接的适配器。
     mount_id: int
     name: str
     safe_name: str
@@ -59,10 +63,12 @@ class MountHandle:
 
 
 def _safe_mount_name(name: str) -> str:
+    # WebDAV URL 用 /mount-name/path 表示挂载，挂载名中的斜杠必须替换掉。
     return name.replace("/", "_").replace("\\", "_")
 
 
 def _dav_status(exc: Exception) -> int:
+    # 将项目内部异常粗略映射为 WebDAV/HTTP 状态码。
     if isinstance(exc, HTTPException) and exc.status_code == 403:
         return HTTP_FORBIDDEN
     if isinstance(exc, FileNotFoundError):
@@ -90,6 +96,7 @@ class WebDAVRequestContext:
 
     async def enforce(self, mount_id: int, action: str) -> None:
         async with self.session_factory() as db:
+            # WebDAV 文件动作复用和前端 API 一致的文件权限策略。
             await enforce_file_policy(db, self.user, mount_id, action)
 
     async def log(
@@ -122,6 +129,7 @@ class WebDAVRequestContext:
 
     async def trash_or_delete(self, mount_id: int, adapter: "BaseAdapter", path: str) -> None:
         if self.recycle_delete:
+            # WebDAV DELETE 默认也走项目回收站策略，保持和前端文件浏览器一致。
             async with self.session_factory() as db:
                 await trash_service.trash_file(db, mount_id, path, user=self.user)
                 from app.services import search_service, share_service
@@ -138,6 +146,7 @@ class WebDAVRequestContext:
 
     async def refresh_index(self, mount_id: int, path: str) -> None:
         async with self.session_factory() as db:
+            # WebDAV 写入同样要同步搜索索引和分享快照，否则前端搜索/分享会看到旧状态。
             from app.services import search_service, share_service
             await search_service.refresh_path_index(db, mount_id, path)
             await share_service.handle_source_changed(db, mount_id, path)
@@ -175,6 +184,7 @@ class _AdapterMixin:
     def _ensure_info(self):
         if self._info is None:
             try:
+                # 某些 WsgiDAV 属性查询会重复访问元数据，已传入 file_info 时优先复用。
                 self._info = _run_async(self._adapter.get_info(self._adapter_path()))
             except Exception:
                 self._info = None
@@ -182,17 +192,20 @@ class _AdapterMixin:
     def _adapter_path(self, path: str | None = None) -> str:
         resource_path = path if path is not None else self.path
         parts = resource_path.strip("/").split("/", 1)
+        # WebDAV 路径第一段是挂载点安全名称，第二段以后才是适配器内部路径。
         return normalize_path("/" + parts[1] if len(parts) > 1 else "/")
 
     def _target_adapter_path(self, dest_path: str) -> str:
         parts = dest_path.strip("/").split("/", 1)
         if not parts or parts[0] != self._handle.safe_name:
+            # WsgiDAV copy/move 目标可能跨集合；当前实现只允许同一挂载内移动/复制。
             raise DAVError(HTTP_FORBIDDEN, "Cross-mount WebDAV copy/move is not supported")
         return normalize_path("/" + parts[1] if len(parts) > 1 else "/")
 
     def _require(self, action: str, adapter_path: str | None = None) -> None:
         path = adapter_path if adapter_path is not None else self._adapter_path()
         if trash_service.is_trash_path(path):
+            # 内部回收站目录不对 WebDAV 客户端暴露。
             raise DAVError(HTTP_NOT_FOUND, f"Resource not found: {path}")
         try:
             _run_async(self._context.enforce(self._mount_id, action))
@@ -204,6 +217,7 @@ class _AdapterMixin:
 
 
 class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
+    # 目录资源: 负责列目录、创建子目录、删除目录、目录级 copy/move。
     def __init__(self, path: str, environ: dict, handle: MountHandle,
                  context: WebDAVRequestContext, file_info: "FileInfo | None" = None):
         dav_provider.DAVCollection.__init__(self, path, environ)
@@ -216,6 +230,7 @@ class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
         self._require("list")
         try:
             entries = _run_async(self._adapter.list_dir(self._adapter_path()))
+            # 避免 Windows 客户端看到 /.mounthub_trash 等内部目录。
             return [e.name for e in entries if not trash_service.is_trash_path(e.path)]
         except DAVError:
             raise
@@ -227,6 +242,7 @@ class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
         adapter_path = self._adapter_path(child_path)
         self._require("info", adapter_path)
         try:
+            # 根据适配器返回的 FileInfo 类型，动态创建目录或文件 DAVResource。
             info = _run_async(self._adapter.get_info(adapter_path))
             if info.is_dir:
                 return AdapterCollection(child_path, self.environ, self._handle, self._context, info)
@@ -252,6 +268,7 @@ class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
         file_path = util.join_uri(self.path, name)
         adapter_path = self._adapter_path(file_path)
         self._require("upload", adapter_path)
+        # Windows Explorer 上传新文件时会先创建空资源，再调用 begin_write 写入内容。
         return AdapterNonCollection(file_path, self.environ, self._handle, self._context)
 
     def delete(self):
@@ -286,10 +303,12 @@ class AdapterCollection(dav_provider.DAVCollection, _AdapterMixin):
             raise _dav_error(exc, "Copy/move failed")
 
     def support_recursive_delete(self) -> bool:
+        # 递归删除交给适配器/回收站服务处理，不让 WsgiDAV 自己逐个子项递归。
         return False
 
 
 class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
+    # 文件资源: 负责下载内容、接收上传写入、删除文件、文件级 copy/move。
     def __init__(self, path: str, environ: dict, handle: MountHandle,
                  context: WebDAVRequestContext, file_info: "FileInfo | None" = None):
         dav_provider.DAVNonCollection.__init__(self, path, environ)
@@ -319,6 +338,7 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
         return time.time()
 
     def support_etag(self) -> bool:
+        # 远端协议不一定能稳定提供 ETag；显式关闭以满足 WsgiDAV 4.x 抽象接口。
         return False
 
     def get_etag(self) -> str | None:
@@ -332,6 +352,8 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
         chunks = []
 
         async def _collect():
+            # WsgiDAV 期望同步文件对象，这里把异步下载收集到 BytesIO 后返回。
+            # 大文件如需优化，可改为兼容 WsgiDAV 的流式 file-like 对象。
             async for chunk in self._adapter.download(self._adapter_path()):
                 chunks.append(chunk)
 
@@ -348,6 +370,7 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
     def begin_write(self, *, content_type: str = None):
         adapter_path = self._adapter_path()
         self._require("upload", adapter_path)
+        # 返回 file-like 对象供 WsgiDAV 写入；真正上传发生在 _WriteBuffer.close。
         return _WriteBuffer(self._adapter, adapter_path, self._context, self._mount_id)
 
     def delete(self):
@@ -383,6 +406,7 @@ class AdapterNonCollection(dav_provider.DAVNonCollection, _AdapterMixin):
 
 
 class _WriteBuffer:
+    # WsgiDAV 的 PUT 写入接口是同步 file-like 协议，这里用内存缓冲桥接到异步适配器上传。
     def __init__(self, adapter: "BaseAdapter", path: str, context: WebDAVRequestContext, mount_id: int):
         self._adapter = adapter
         self._path = path
@@ -399,6 +423,7 @@ class _WriteBuffer:
 
         async def _upload():
             async def _iter():
+                # WsgiDAV 以同步 write 写入缓冲区；关闭时再拆成异步块交给适配器上传。
                 chunk_size = 65536
                 offset = 0
                 while offset < len(data):
@@ -423,6 +448,7 @@ class _WriteBuffer:
 
 
 class MultiMountDAVProvider(dav_provider.DAVProvider):
+    # 根 Provider 将 / 映射为挂载点列表，将 /挂载名/... 映射为具体挂载内路径。
     def __init__(
         self,
         session_factory: "async_sessionmaker",
@@ -436,6 +462,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
         self._mount_cache: dict[tuple[int, int], tuple[float, list[MountHandle]]] = {}
 
     def get_resource_inst(self, path: str, environ: dict):
+        # WsgiDAV 每个请求都通过此方法把 URL 路径解析为 DAVResource 对象。
         user = self._user_from_environ(environ)
         if user is None:
             return None
@@ -469,6 +496,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
 
         async def _load():
             async with self._session_factory() as db:
+                # 预加载 role，后续权限判断需要读取用户角色。
                 result = await db.execute(
                     select(User)
                     .options(selectinload(User.role))
@@ -490,8 +518,10 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
 
         async def _load():
             async with self._session_factory() as db:
+                # 只暴露当前用户可访问的挂载；管理员/超级管理员由权限服务返回全部挂载。
                 accessible = await get_accessible_mount_ids(db, user)
                 if self._root_mount_id is not None:
+                    # 系统设置选择单个 WebDAV 根挂载时，在权限结果上再取交集。
                     accessible &= {self._root_mount_id}
                 if not accessible:
                     return []
@@ -502,6 +532,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
                     try:
                         config = {}
                         for key, value in (mount.config or {}).items():
+                            # WebDAV 服务线程需要直接创建适配器，因此这里重复做敏感字段解密。
                             if key in ("password", "access_key_secret", "private_key"):
                                 try:
                                     config[key] = decrypt_field(value)
@@ -515,6 +546,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
                         safe_name = base_name
                         suffix = 2
                         while safe_name in used_names:
+                            # WebDAV URL 中用 safe_name 区分挂载；同名挂载追加数字后缀。
                             safe_name = f"{base_name}-{suffix}"
                             suffix += 1
                         used_names.add(safe_name)
@@ -524,6 +556,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
                 return handles
 
         handles = _run_async(_load())
+        # 按线程缓存挂载句柄，避免每次 PROPFIND 都重新解密配置并连接远端协议。
         self._mount_cache[cache_key] = (now, handles)
         return handles
 
@@ -535,6 +568,7 @@ class MultiMountDAVProvider(dav_provider.DAVProvider):
 
 
 class _RootCollection(dav_provider.DAVCollection):
+    # WebDAV 根目录资源: 展示当前用户可见的挂载点名称。
     def __init__(self, path: str, environ: dict, provider: MultiMountDAVProvider, user: User):
         super().__init__(path, environ)
         self._provider = provider
@@ -544,6 +578,7 @@ class _RootCollection(dav_provider.DAVCollection):
         return {"type": "Root"}
 
     def get_member_names(self) -> list[str]:
+        # Windows Explorer 打开根目录时会调用此方法列出所有“子文件夹”。
         return [handle.safe_name for handle in self._provider._visible_mounts(self._user)]
 
     def get_member(self, name: str):
@@ -561,6 +596,7 @@ class _RootCollection(dav_provider.DAVCollection):
             info = _run_async(handle.adapter.get_info("/"))
             return AdapterCollection("/" + name, self.environ, handle, context, info)
         except Exception:
+            # 根目录信息读取失败时仍返回集合资源，让客户端后续操作再得到具体错误。
             return AdapterCollection("/" + name, self.environ, handle, context)
 
     def get_content_length(self) -> int | None:

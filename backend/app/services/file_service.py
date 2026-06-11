@@ -30,6 +30,7 @@ def _split_path(path: str) -> tuple[str, str]:
 def _rename_candidate(path: str, index: int) -> str:
     parent, name = _split_path(path)
     stem, dot, suffix = name.rpartition(".")
+    # 自动重命名时尽量保留扩展名，例如 a.txt -> a (1).txt。
     if dot and stem:
         new_name = f"{stem} ({index}).{suffix}"
     else:
@@ -59,10 +60,12 @@ async def resolve_conflict(db: AsyncSession, mount_id: int, path: str,
     if policy == "skip":
         return path, True
     if policy == "overwrite":
+        # 覆盖前先永久删除旧目标，避免适配器自身不支持覆盖写入。
         await delete_file_permanently(db, mount_id, path, sync_shares=False)
         return path, False
     if policy == "rename":
         for i in range(1, 1000):
+            # rename 策略只寻找可用目标，不会修改源路径。
             candidate = _rename_candidate(path, i)
             try:
                 await get_info(db, mount_id, candidate)
@@ -80,6 +83,7 @@ async def list_dir(db: AsyncSession, mount_id: int, path: str = "/") -> list[Fil
     try:
         await adapter.connect()
         items = await adapter.list_dir(path)
+        # 回收站目录是内部实现细节，普通文件浏览和 WebDAV 暴露时都应隐藏。
         return [item for item in items if not is_trash_path(item.path)]
     except FileNotFoundError:
         raise NotFoundException(f"目录不存在: {path}")
@@ -153,6 +157,7 @@ async def upload_file(db: AsyncSession, mount_id: int, path: str,
         await adapter.connect()
         await adapter.upload(path, data, size)
         info = await adapter.get_info(path)
+        # 文件系统变更后同步刷新派生数据：搜索索引用于检索，分享快照用于公开链接稳定访问。
         from app.services import search_service
         await search_service.refresh_path_index(db, mount_id, path, recursive=False)
         from app.services import share_service
@@ -188,6 +193,7 @@ async def delete_file(db: AsyncSession, mount_id: int, path: str, user=None) -> 
     """Move a file or directory into the recycle bin."""
     from app.services import trash_service
 
+    # 普通删除走回收站；永久删除只在覆盖、清空回收站等内部路径使用。
     await trash_service.trash_file(db, mount_id, path, user=user)
     from app.services import search_service
     await search_service.remove_path_index(db, mount_id, path)
@@ -226,6 +232,7 @@ async def move_file(db: AsyncSession, mount_id: int, src: str, dst: str,
         await adapter.connect()
         await adapter.move(src, dst)
         info = await adapter.get_info(dst)
+        # 移动后旧路径索引必须删除，新路径重新索引；分享链接也要跟随源路径迁移。
         from app.services import search_service
         await search_service.remove_path_index(db, mount_id, src)
         await search_service.refresh_path_index(db, mount_id, dst)
@@ -252,6 +259,7 @@ async def copy_file(db: AsyncSession, mount_id: int, src: str, dst: str,
         await adapter.connect()
         await adapter.copy(src, dst)
         info = await adapter.get_info(dst)
+        # 复制不会影响源路径，只需要刷新目标路径索引和关联分享快照状态。
         from app.services import search_service
         await search_service.refresh_path_index(db, mount_id, dst)
         from app.services import share_service
@@ -283,6 +291,7 @@ async def iter_files_recursive(
         for item in await list_dir(db, mount_id, current_path):
             if is_trash_path(item.path):
                 continue
+            # relative_prefix 是写入 zip 时使用的相对路径，不等同于挂载点内真实路径。
             relative = f"{relative_prefix}/{item.name}" if relative_prefix else item.name
             if item.is_dir:
                 async for child in _walk(item.path, relative):
@@ -305,6 +314,7 @@ async def directory_stats(db: AsyncSession, mount_id: int, path: str) -> dict:
 
     async def _walk(current_path: str):
         for item in await list_dir(db, mount_id, current_path):
+            # 目录统计直接访问适配器目录树；远端协议较慢时该接口可能耗时较长。
             if item.is_dir:
                 stats["dir_count"] += 1
                 await _walk(item.path)

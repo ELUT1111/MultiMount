@@ -62,6 +62,8 @@ def _get_adapter(mount: Mount) -> BaseAdapter:
 
 
 def _safe_managed_dir_base(name: str) -> str:
+    # 托管挂载点会在项目根目录 mount_points 下创建真实文件夹，
+    # 因此挂载名必须先转换为安全目录名，避免路径穿越或 Windows 非法字符。
     cleaned = _INVALID_DIR_CHARS.sub("_", name).strip().strip(".")
     return cleaned or "未命名挂载"
 
@@ -70,6 +72,7 @@ def _create_managed_mount_dir(name: str) -> Path:
     MANAGED_MOUNT_ROOT.mkdir(parents=True, exist_ok=True)
     base = _safe_managed_dir_base(name)
     for index in range(0, 1000):
+        # 重名时使用中文括号后缀，保持和前端“挂载点名（1）”提示一致。
         dirname = base if index == 0 else f"{base}（{index}）"
         path = MANAGED_MOUNT_ROOT / dirname
         try:
@@ -84,6 +87,8 @@ async def _refresh_mount_capacity(mount: Mount) -> None:
     adapter = _get_adapter(mount)
     try:
         await adapter.connect()
+        # capacity_used/capacity_total 在当前 UI 中被复用为“文件数量/总大小”，
+        # 不是磁盘分区剩余容量；无法安全统计时置空，让前端显示未知状态。
         stats = await adapter.get_tree_stats("/")
     except Exception:
         stats = None
@@ -127,6 +132,7 @@ async def create_mount(db: AsyncSession, name: str, mount_type: str,
         raise BadRequestException(f"不支持的挂载类型: {mount_type}")
 
     if mount_type == "managed":
+        # managed 类型不是外部协议，而是项目自动创建的空挂载点，底层仍通过 LocalAdapter 访问。
         mount_dir = _create_managed_mount_dir(name)
         config = {
             "path": str(mount_dir),
@@ -155,6 +161,7 @@ async def update_mount(db: AsyncSession, mount_id: int, **kwargs) -> Mount:
     for key, value in kwargs.items():
         if value is not None and hasattr(mount, key):
             if key == "config":
+                # 更新配置时重新加密敏感字段，避免明文密码或私钥写入数据库。
                 mount.config = _encrypt_config(value)
             else:
                 setattr(mount, key, value)
@@ -199,6 +206,7 @@ async def test_mount_connection(db: AsyncSession, mount_id: int) -> bool:
     try:
         ok = await adapter.test_connection()
         if ok:
+            # 测试成功时顺带刷新统计，避免列表页长期展示旧的文件数量/大小。
             mount.status = "online"
             mount.last_connected_at = datetime.now(timezone.utc)
             await _refresh_mount_capacity(mount)

@@ -7,6 +7,8 @@ from typing import AsyncIterator
 @dataclass
 class FileInfo:
     """统一文件元数据结构 — 所有适配器返回此类型"""
+    # 这里使用“类 Unix 风格路径”作为统一协议，前端和服务层都按 /path/name 处理。
+    # 各适配器内部再转换成本地路径、FTP 路径、对象存储 key 或 WebDAV URL。
     name: str                   # 文件名
     path: str                   # 完整路径
     is_dir: bool                # 是否为目录
@@ -19,6 +21,8 @@ class FileInfo:
 
 class BaseAdapter(ABC):
     """文件系统适配器抽象基类 — 所有协议实现此类"""
+    # 服务层只调用这些抽象方法，因此新增协议时只需实现本类接口并注册到 AdapterRegistry。
+    # 方法统一设计为 async，哪怕底层 SDK 是同步库，也应由适配器内部用线程池桥接。
 
     @abstractmethod
     async def connect(self) -> bool:
@@ -46,6 +50,7 @@ class BaseAdapter(ABC):
 
     async def download_range(self, path: str, start: int, end: int | None = None) -> AsyncIterator[bytes]:
         """Stream a byte range. Adapters may override with native range requests."""
+        # 默认实现通过普通下载跳过前置字节；S3/OSS 等支持 Range 的协议可覆盖为原生范围请求。
         if start < 0 or (end is not None and end < start):
             raise ValueError("invalid range")
         skipped = 0
@@ -88,6 +93,7 @@ class BaseAdapter(ABC):
     async def copy(self, src: str, dst: str) -> None:
         """复制文件 (默认实现: 流式下载再上传, 不缓冲整个文件)"""
 
+        # 默认跨协议无关复制策略。协议若支持服务端 copy，可覆盖此方法减少网络流量。
         async def _stream():
             async for chunk in self.download(src):
                 yield chunk
@@ -107,6 +113,7 @@ class BaseAdapter(ABC):
         max_dirs = 10000
 
         while stack:
+            # 对递归统计设置目录上限，避免深层远端挂载导致一次容量刷新长时间阻塞。
             current = stack.pop()
             visited += 1
             if visited > max_dirs:
